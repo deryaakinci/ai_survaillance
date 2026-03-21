@@ -66,5 +66,12 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+<key>UIBackgroundModes</key>
+<array>
+    <string>fetch</string>
+    <string>remote-notification</string>
+</array>
+<key>NSUserNotificationUsageDescription</key>
+<string>This app sends security alerts when suspicious activity is detected.</string>
 </dict>
 </plist>

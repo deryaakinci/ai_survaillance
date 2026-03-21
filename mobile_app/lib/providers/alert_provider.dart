@@ -1,36 +1,59 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/alert_model.dart';
 import '../services/api_service.dart';
 
 class AlertProvider extends ChangeNotifier {
   final ApiService _api = ApiService();
-
   List<AlertModel> alerts = [];
   bool isLoading = false;
   int selectedDays = 7;
   bool audioOnline = true;
   bool visualOnline = true;
+  Timer? _pollingTimer;
 
   Future<void> loadAlerts() async {
     isLoading = true;
     notifyListeners();
-    alerts = await _api.getAlerts(days: selectedDays);
+    final fetched = await _api.getAlerts(days: selectedDays);
+    alerts = fetched;
     isLoading = false;
     notifyListeners();
+  }
+
+  void startPolling() {
+    loadAlerts();
+    // Poll every 8 seconds as backup to WebSocket
+    _pollingTimer = Timer.periodic(
+      const Duration(seconds: 8),
+      (_) => loadAlerts(),
+    );
+  }
+
+  void stopPolling() {
+    _pollingTimer?.cancel();
+    _pollingTimer = null;
+  }
+
+  // Called by WebSocket when new alert arrives
+  Future<void> refreshNow() async {
+    await loadAlerts();
   }
 
   void setDays(int days) {
     selectedDays = days;
     loadAlerts();
   }
+
   void updateSensorStatus({
-  required bool audio,
-  required bool visual,
+    required bool audio,
+    required bool visual,
   }) {
-  audioOnline = audio;
-  visualOnline = visual;
-  notifyListeners();
+    audioOnline = audio;
+    visualOnline = visual;
+    notifyListeners();
   }
+
   List<AlertModel> get todayAlerts {
     final now = DateTime.now();
     return alerts.where((a) =>
@@ -42,7 +65,9 @@ class AlertProvider extends ChangeNotifier {
 
   int countByType(String label) {
     return alerts
-        .where((a) => a.audioLabel.toLowerCase().contains(label.toLowerCase()))
+        .where((a) => a.audioLabel
+            .toLowerCase()
+            .contains(label.toLowerCase()))
         .length;
   }
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'providers/alert_provider.dart';
 import 'providers/auth_provider.dart';
+import 'services/websocket_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/alerts_screen.dart';
@@ -15,6 +16,7 @@ void main() {
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => AlertProvider()),
+        ChangeNotifierProvider(create: (_) => WebSocketService()),
       ],
       child: const MyApp(),
     ),
@@ -61,6 +63,33 @@ class MainNavigationState extends State<MainNavigation> {
     HistoryScreen(),
     AccountScreen(),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() {
+      final alertProvider = context.read<AlertProvider>();
+      final wsService = context.read<WebSocketService>();
+
+      // Start polling
+      alertProvider.startPolling();
+
+      // Connect WebSocket
+      wsService.connect();
+
+      // When WebSocket gets new alert — refresh all screens immediately
+      wsService.addAlertListener(() {
+        alertProvider.refreshNow();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    context.read<WebSocketService>().disconnect();
+    context.read<AlertProvider>().stopPolling();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
