@@ -9,7 +9,7 @@ class FusionEngine:
         audio_conf = audio_result.get("confidence", 0.0)
         visual_conf = visual_result.get("confidence", 0.0)
 
-        # Weighted fusion — audio slightly more weight for this system
+        # Weighted fusion — audio slightly more weight
         fused_score = (audio_conf * 0.55) + (visual_conf * 0.45)
 
         # Get severity from both
@@ -22,7 +22,7 @@ class FusionEngine:
         if audio_normal and visual_normal:
             alert = False
         elif audio_normal or visual_normal:
-            # Only one detected something — alert only if high confidence
+            # Only one detected something — high confidence needed
             alert = fused_score > 0.75
         else:
             # Both detected something — lower threshold
