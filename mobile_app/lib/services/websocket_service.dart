@@ -92,7 +92,6 @@ class WebSocketService extends ChangeNotifier {
               DateTime.now(),
         );
 
-        // Show phone notification
         _notificationService.showAlertNotification(latestAlert!);
 
         // Notify all screens to refresh
