@@ -23,7 +23,6 @@ class AlertProvider extends ChangeNotifier {
 
   void startPolling() {
     loadAlerts();
-    // Poll every 8 seconds as backup to WebSocket
     _pollingTimer = Timer.periodic(
       const Duration(seconds: 8),
       (_) => loadAlerts(),
@@ -35,7 +34,6 @@ class AlertProvider extends ChangeNotifier {
     _pollingTimer = null;
   }
 
-  // Called by WebSocket when new alert arrives
   Future<void> refreshNow() async {
     await loadAlerts();
   }

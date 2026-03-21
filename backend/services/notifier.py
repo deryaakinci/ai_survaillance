@@ -30,11 +30,7 @@ class SystemHealthMonitor:
             "reliability": self._estimate_reliability(),
         }
 
-    def _overall_status(
-        self,
-        audio_age: int,
-        visual_age: int,
-    ) -> str:
+    def _overall_status(self, audio_age: int, visual_age: int) -> str:
         if audio_age < 30 and visual_age < 30:
             return "fully operational"
         elif audio_age < 30 or visual_age < 30:
@@ -47,3 +43,23 @@ class SystemHealthMonitor:
         elif self.audio_status or self.visual_status:
             return "~70%"
         return "0%"
+
+
+class NotificationService:
+    def __init__(self, manager=None):
+        self.manager = manager
+
+    async def send_alert(self, payload: dict):
+        if self.manager:
+            await self.manager.broadcast({
+                "type": "alert",
+                "data": payload,
+            })
+            print(f"Alert broadcast: {payload.get('title')}")
+
+    async def send_sensor_status(self, status: dict):
+        if self.manager:
+            await self.manager.broadcast({
+                "type": "sensor_status",
+                "data": status,
+            })

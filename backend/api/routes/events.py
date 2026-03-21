@@ -1,24 +1,123 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 from backend.database.db import get_db
-from backend.database.models import Event
+from backend.database.models import User
+import hashlib
+import hmac
+import base64
+import json
+import time
+import uuid
 
 router = APIRouter()
 
-@router.get("/")
-def get_events(db: Session = Depends(get_db)):
-    events = db.query(Event).order_by(Event.timestamp.desc()).limit(50).all()
-    return events
+SECRET_KEY = "your_secret_key_change_in_production"
 
-@router.post("/")
-def create_event(audio_label: str, visual_label: str, fusion_score: float, db: Session = Depends(get_db)):
-    event = Event(
-        audio_label=audio_label,
-        visual_label=visual_label,
-        fusion_score=fusion_score,
-        alert_fired=fusion_score > 0.65
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class SignupRequest(BaseModel):
+    name: str
+    email: str
+    password: str
+
+
+def create_token(user_id: str, email: str) -> str:
+    payload = {
+        "user_id": user_id,
+        "email": email,
+        "exp": int(time.time()) + 86400,
+    }
+    payload_b64 = base64.b64encode(
+        json.dumps(payload).encode()
+    ).decode()
+    signature = hmac.new(
+        SECRET_KEY.encode(),
+        payload_b64.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{payload_b64}.{signature}"
+
+
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
+
+
+@router.post("/login")
+def login(request: LoginRequest, db: Session = Depends(get_db)):
+    if not request.email or len(request.password) < 6:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid email or password",
+        )
+
+    # Find user in database
+    user = db.query(User).filter(
+        User.email == request.email
+    ).first()
+
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="Email not found",
+        )
+
+    # Check password
+    if user.password_hash != hash_password(request.password):
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect password",
+        )
+
+    token = create_token(user.id, user.email)
+
+    return {
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "token": token,
+    }
+
+
+@router.post("/signup")
+def signup(request: SignupRequest, db: Session = Depends(get_db)):
+    if not request.name or not request.email or len(request.password) < 6:
+        raise HTTPException(
+            status_code=400,
+            detail="Please fill all fields correctly",
+        )
+
+    # Check if email already exists
+    existing = db.query(User).filter(
+        User.email == request.email
+    ).first()
+
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail="Email already registered",
+        )
+
+    # Create new user
+    user = User(
+        id=str(uuid.uuid4()),
+        name=request.name,
+        email=request.email,
+        password_hash=hash_password(request.password),
     )
-    db.add(event)
+    db.add(user)
     db.commit()
-    db.refresh(event)
-    return event
+    db.refresh(user)
+
+    token = create_token(user.id, user.email)
+
+    return {
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "token": token,
+    }

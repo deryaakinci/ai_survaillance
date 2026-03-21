@@ -2,20 +2,26 @@ PODS:
   - Flutter (1.0.0)
   - flutter_local_notifications (0.0.1):
     - Flutter
+  - flutter_secure_storage (6.0.0):
+    - Flutter
 
 DEPENDENCIES:
   - Flutter (from `Flutter`)
   - flutter_local_notifications (from `.symlinks/plugins/flutter_local_notifications/ios`)
+  - flutter_secure_storage (from `.symlinks/plugins/flutter_secure_storage/ios`)
 
 EXTERNAL SOURCES:
   Flutter:
     :path: Flutter
   flutter_local_notifications:
     :path: ".symlinks/plugins/flutter_local_notifications/ios"
+  flutter_secure_storage:
+    :path: ".symlinks/plugins/flutter_secure_storage/ios"
 
 SPEC CHECKSUMS:
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
   flutter_local_notifications: 4cde75091f6327eb8517fa068a0a5950212d2086
+  flutter_secure_storage: d33dac7ae2ea08509be337e775f6b59f1ff45f12
 
 PODFILE CHECKSUM: 953a16a77daf071047e1905df604417bfeffd573
 

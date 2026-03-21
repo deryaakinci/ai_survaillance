@@ -10,7 +10,8 @@ import 'screens/analytics_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/account_screen.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(
     MultiProvider(
       providers: [
@@ -34,14 +35,52 @@ class MyApp extends StatelessWidget {
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF0A0A0F),
       ),
-      home: Consumer<AuthProvider>(
-        builder: (context, auth, _) {
-          if (auth.isLoggedIn) {
-            return const MainNavigation();
-          }
-          return const LoginScreen();
-        },
-      ),
+      home: const AppStartScreen(),
+    );
+  }
+}
+
+class AppStartScreen extends StatefulWidget {
+  const AppStartScreen({super.key});
+
+  @override
+  State<AppStartScreen> createState() => _AppStartScreenState();
+}
+
+class _AppStartScreenState extends State<AppStartScreen> {
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkAutoLogin();
+  }
+
+  Future<void> _checkAutoLogin() async {
+    await context.read<AuthProvider>().tryAutoLogin();
+    setState(() => _loading = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Scaffold(
+        backgroundColor: Color(0xFF0A0A0F),
+        body: Center(
+          child: CircularProgressIndicator(
+            color: Color(0xFF7F77DD),
+          ),
+        ),
+      );
+    }
+
+    return Consumer<AuthProvider>(
+      builder: (context, auth, _) {
+        if (auth.isLoggedIn) {
+          return const MainNavigation();
+        }
+        return const LoginScreen();
+      },
     );
   }
 }
@@ -70,14 +109,8 @@ class MainNavigationState extends State<MainNavigation> {
     Future.microtask(() {
       final alertProvider = context.read<AlertProvider>();
       final wsService = context.read<WebSocketService>();
-
-      // Start polling
       alertProvider.startPolling();
-
-      // Connect WebSocket
       wsService.connect();
-
-      // When WebSocket gets new alert — refresh all screens immediately
       wsService.addAlertListener(() {
         alertProvider.refreshNow();
       });

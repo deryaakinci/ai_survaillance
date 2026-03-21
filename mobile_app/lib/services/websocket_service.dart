@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/alert_model.dart';
 import 'notification_service.dart';
+import 'secure_storage_service.dart';
 
 class WebSocketService extends ChangeNotifier {
   WebSocketChannel? _channel;
@@ -13,7 +14,7 @@ class WebSocketService extends ChangeNotifier {
   Timer? _pingTimer;
 
   final NotificationService _notificationService = NotificationService();
-
+  final SecureStorageService _storage = SecureStorageService();
   final List<VoidCallback> _onAlertCallbacks = [];
 
   void addAlertListener(VoidCallback callback) {
@@ -30,16 +31,17 @@ class WebSocketService extends ChangeNotifier {
     _connect();
   }
 
-  void _connect() {
+  Future<void> _connect() async {
     try {
+      final userId = await _storage.getUserId() ?? '1';
+
       _channel = WebSocketChannel.connect(
-        Uri.parse('ws://10.0.2.2:8000/ws'),
+        Uri.parse('ws://10.0.2.2:8000/ws/$userId'),
       );
 
       isConnected = true;
       notifyListeners();
 
-      // Ping every 30 seconds to keep alive
       _pingTimer?.cancel();
       _pingTimer = Timer.periodic(
         const Duration(seconds: 30),
@@ -65,7 +67,6 @@ class WebSocketService extends ChangeNotifier {
     _pingTimer?.cancel();
     notifyListeners();
 
-    // Reconnect after 5 seconds
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(
       const Duration(seconds: 5),
@@ -94,7 +95,6 @@ class WebSocketService extends ChangeNotifier {
 
         _notificationService.showAlertNotification(latestAlert!);
 
-        // Notify all screens to refresh
         for (final callback in _onAlertCallbacks) {
           callback();
         }
@@ -105,10 +105,12 @@ class WebSocketService extends ChangeNotifier {
       if (type == 'sensor_status') {
         final statusData = data['data'];
         if (statusData['audio_online'] == false) {
-          _notificationService.showSensorOfflineNotification('Audio sensor');
+          _notificationService
+              .showSensorOfflineNotification('Audio sensor');
         }
         if (statusData['visual_online'] == false) {
-          _notificationService.showSensorOfflineNotification('Visual sensor');
+          _notificationService
+              .showSensorOfflineNotification('Visual sensor');
         }
         notifyListeners();
       }
