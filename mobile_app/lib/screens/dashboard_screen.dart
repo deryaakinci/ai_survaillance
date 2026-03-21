@@ -5,6 +5,7 @@ import '../widgets/alert_card.dart';
 import '../widgets/stat_card.dart';
 import 'alert_detail_screen.dart';
 
+
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
 
@@ -49,41 +50,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           ),
                           Row(
                             children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 3,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF1A0A0A),
-                                  border: Border.all(
-                                    color: const Color(0xFFE24B4A),
-                                    width: 0.5,
-                                  ),
-                                  borderRadius: BorderRadius.circular(20),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Container(
-                                      width: 5,
-                                      height: 5,
-                                      decoration: const BoxDecoration(
-                                        color: Color(0xFFE24B4A),
-                                        shape: BoxShape.circle,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    const Text(
-                                      'Live',
-                                      style: TextStyle(
-                                        fontSize: 9,
-                                        color: Color(0xFFE24B4A),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: 8),
                               _SensorStatusBadge(
                                 audioOnline: provider.audioOnline,
                                 visualOnline: provider.visualOnline,
@@ -148,7 +114,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                !provider.audioOnline && !provider.visualOnline
+                                !provider.audioOnline &&
+                                        !provider.visualOnline
                                     ? 'All sensors offline — system not monitoring'
                                     : !provider.audioOnline
                                         ? 'Audio sensor offline — visual only mode (~70% accuracy)'
