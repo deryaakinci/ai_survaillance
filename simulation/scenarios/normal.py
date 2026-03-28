@@ -1,10 +1,9 @@
-import numpy as np
+from simulation.scenarios.base import load_scenario
 
-def simulate():
-    return {
-        "name": "Normal",
-        "audio": np.random.uniform(0.001, 0.005, 22050).astype(np.float32),
-        "sr": 22050,
-        "visual": {"label": "normal", "confidence": 0.95, "detections": [], "person_count": 0},
-        "expected_severity": "none",
-    }
+def simulate() -> dict:
+    return load_scenario(
+        name="Normal",
+        audio_label="normal",
+        visual_label="normal",
+        expected_severity="low",
+    )

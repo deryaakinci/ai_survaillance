@@ -1,10 +1,9 @@
-import numpy as np
+from simulation.scenarios.base import load_scenario
 
-def simulate():
-    return {
-        "name": "Forced entry",
-        "audio": np.random.uniform(0.08, 0.20, 22050).astype(np.float32),
-        "sr": 22050,
-        "visual": {"label": "forced_entry", "confidence": 0.91, "detections": [], "person_count": 1},
-        "expected_severity": "high",
-    }
+def simulate() -> dict:
+    return load_scenario(
+        name="Forced entry",
+        audio_label="door_forced",
+        visual_label="forced_entry",
+        expected_severity="high",
+    )

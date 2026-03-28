@@ -1,10 +1,9 @@
-import numpy as np
+from simulation.scenarios.base import load_scenario
 
-def simulate():
-    return {
-        "name": "Threatening voice",
-        "audio": np.random.uniform(0.04, 0.06, 22050).astype(np.float32),
-        "sr": 22050,
-        "visual": {"label": "intruder_detected", "confidence": 0.80, "detections": [], "person_count": 1},
-        "expected_severity": "high",
-    }
+def simulate() -> dict:
+    return load_scenario(
+        name="Threatening voice",
+        audio_label="threatening_voice",
+        visual_label="masked_person",
+        expected_severity="high",
+    )
