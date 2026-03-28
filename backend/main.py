@@ -1,14 +1,22 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 from backend.api.routes import events, alerts, stats, auth
 from backend.database.db import init_db
 from typing import Dict, List
 import json
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
+
 app = FastAPI(
     title="AI Surveillance API",
     description="Intelligent Audio-Visual Fusion Surveillance System",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -61,9 +69,7 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-@app.on_event("startup")
-async def startup():
-    init_db()
+
 
 
 @app.get("/")

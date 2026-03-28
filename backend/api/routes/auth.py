@@ -3,16 +3,18 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from backend.database.db import get_db
 from backend.database.models import User
-import hashlib
+import bcrypt
 import hmac
+import hashlib
 import base64
 import json
 import time
 import uuid
+import os
 
 router = APIRouter()
 
-SECRET_KEY = "your_secret_key_change_in_production"
+SECRET_KEY = os.getenv("SECRET_KEY", "your_secret_key_change_in_production")
 
 
 class LoginRequest(BaseModel):
@@ -44,7 +46,11 @@ def create_token(user_id: str, email: str) -> str:
 
 
 def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    return bcrypt.checkpw(password.encode(), password_hash.encode())
 
 
 @router.post("/login")
@@ -67,7 +73,7 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
         )
 
     # Check password
-    if user.password_hash != hash_password(request.password):
+    if not verify_password(request.password, user.password_hash):
         raise HTTPException(
             status_code=401,
             detail="Incorrect password",

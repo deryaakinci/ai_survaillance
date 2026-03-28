@@ -3,6 +3,10 @@ import '../models/alert_model.dart';
 import 'secure_storage_service.dart';
 
 class ApiService {
+  // TODO: Update baseUrl for your environment:
+  //   Android emulator  → 'http://10.0.2.2:8000'
+  //   iOS simulator     → 'http://127.0.0.1:8000'
+  //   Real device       → 'http://<your-machine-local-IP>:8000'
   static const String baseUrl = 'http://10.0.2.2:8000';
 
   final SecureStorageService _storage = SecureStorageService();
@@ -42,31 +46,18 @@ class ApiService {
     String email,
     String password,
   ) async {
-    try {
-      final response = await _dio.post(
-        '/auth/login',
-        data: {'email': email, 'password': password},
-      );
-      final token = response.data['token'];
-      if (token != null) {
-        await _storage.saveToken(token);
-        await _storage.saveUserId(response.data['id'] ?? '');
-        await _storage.saveUserName(response.data['name'] ?? '');
-        await _storage.saveUserEmail(email);
-      }
-      return response.data;
-    } catch (e) {
-      await _storage.saveToken('mock_token_123');
-      await _storage.saveUserId('1');
-      await _storage.saveUserName(email.split('@')[0]);
+    final response = await _dio.post(
+      '/auth/login',
+      data: {'email': email, 'password': password},
+    );
+    final token = response.data['token'];
+    if (token != null) {
+      await _storage.saveToken(token);
+      await _storage.saveUserId(response.data['id'] ?? '');
+      await _storage.saveUserName(response.data['name'] ?? '');
       await _storage.saveUserEmail(email);
-      return {
-        'id': '1',
-        'name': email.split('@')[0],
-        'email': email,
-        'token': 'mock_token_123',
-      };
     }
+    return response.data;
   }
 
   Future<Map<String, dynamic>> signup(
@@ -74,35 +65,22 @@ class ApiService {
     String email,
     String password,
   ) async {
-    try {
-      final response = await _dio.post(
-        '/auth/signup',
-        data: {
-          'name': name,
-          'email': email,
-          'password': password,
-        },
-      );
-      final token = response.data['token'];
-      if (token != null) {
-        await _storage.saveToken(token);
-        await _storage.saveUserId(response.data['id'] ?? '');
-        await _storage.saveUserName(name);
-        await _storage.saveUserEmail(email);
-      }
-      return response.data;
-    } catch (e) {
-      await _storage.saveToken('mock_token_123');
-      await _storage.saveUserId('1');
-      await _storage.saveUserName(name);
-      await _storage.saveUserEmail(email);
-      return {
-        'id': '1',
+    final response = await _dio.post(
+      '/auth/signup',
+      data: {
         'name': name,
         'email': email,
-        'token': 'mock_token_123',
-      };
+        'password': password,
+      },
+    );
+    final token = response.data['token'];
+    if (token != null) {
+      await _storage.saveToken(token);
+      await _storage.saveUserId(response.data['id'] ?? '');
+      await _storage.saveUserName(name);
+      await _storage.saveUserEmail(email);
     }
+    return response.data;
   }
 
   Future<void> logout() async {

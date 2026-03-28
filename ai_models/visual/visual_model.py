@@ -56,7 +56,8 @@ class VisualAnomalyDetector:
         Pick the detection with the highest confidence.
         """
         best_label = "normal"
-        best_confidence = 0.95  # default when nothing detected
+        best_confidence = 0.0  # separate tracking threshold
+        best_score = 0.0
 
         for result in results:
             for box in result.boxes:
@@ -67,9 +68,11 @@ class VisualAnomalyDetector:
                     if cls_id < len(LABELS)
                     else "normal"
                 )
-                if confidence > best_confidence and label != "normal":
+                if label != "normal" and confidence > best_score:
                     best_label = label
-                    best_confidence = confidence
+                    best_score = confidence
+
+        best_confidence = best_score if best_label != "normal" else 0.95
 
         return {
             "label": best_label,
