@@ -9,26 +9,13 @@ from sklearn.model_selection import train_test_split
 from pathlib import Path
 import json
 
+# Import shared architecture and constants from audio_model
+from audio_model import AudioCNN, NUM_CLASSES, LABELS, LABEL_TO_IDX, IDX_TO_LABEL
 
-LABELS = [
-    "normal",
-    "gunshot",
-    "explosion",
-    "scream",
-    "glass_break",
-    "break_in",
-    "door_forced",
-    "crying_distress",
-    "fight_sounds",
-    "alarm_triggered",
-    "siren",
-    "car_crash",
-    "threatening_voice",
-]
-LABEL_TO_IDX = {label: idx for idx, label in enumerate(LABELS)}
-IDX_TO_LABEL = {idx: label for label, idx in LABEL_TO_IDX.items()}
-NUM_CLASSES = len(LABELS)
 
+# ──────────────────────────────────────────────
+#  Feature extraction (same as audio_model.py)
+# ──────────────────────────────────────────────
 
 def extract_features(audio: np.ndarray, sr: int) -> np.ndarray:
     target_length = sr * 3
@@ -48,19 +35,66 @@ def extract_features(audio: np.ndarray, sr: int) -> np.ndarray:
     return mel_db.astype(np.float32)
 
 
+# ──────────────────────────────────────────────
+#  Augmentation
+# ──────────────────────────────────────────────
+
+def augment_audio(audio: np.ndarray, sr: int) -> np.ndarray:
+    """Apply random augmentations to an audio clip."""
+
+    # Time shift — roll audio forward/backward by up to 10%
+    shift = int(np.random.uniform(-0.1, 0.1) * len(audio))
+    audio = np.roll(audio, shift)
+
+    # Add Gaussian noise
+    if np.random.rand() < 0.5:
+        noise_level = np.random.uniform(0.001, 0.005)
+        audio = audio + noise_level * np.random.randn(len(audio))
+
+    # Pitch shift by -2 to +2 semitones
+    if np.random.rand() < 0.5:
+        steps = np.random.uniform(-2, 2)
+        audio = librosa.effects.pitch_shift(audio, sr=sr, n_steps=steps)
+
+    # Time stretch by 0.9x–1.1x
+    if np.random.rand() < 0.5:
+        rate = np.random.uniform(0.9, 1.1)
+        audio = librosa.effects.time_stretch(audio, rate=rate)
+
+    return audio.astype(np.float32)
+
+
+# ──────────────────────────────────────────────
+#  Dataset
+# ──────────────────────────────────────────────
+
 class AudioDataset(Dataset):
-    def __init__(self, samples):
+    def __init__(self, samples, augment: bool = False):
         self.samples = samples
+        self.augment = augment
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
         item = self.samples[idx]
-        features = torch.tensor(item["features"]).unsqueeze(0)
-        label = torch.tensor(item["label_idx"], dtype=torch.long)
-        return features, label
 
+        if self.augment:
+            audio = item["audio"]
+            sr = item["sr"]
+            audio = augment_audio(audio, sr)
+            features = extract_features(audio, sr)
+        else:
+            features = item["features"]
+
+        tensor = torch.tensor(features).unsqueeze(0)
+        label = torch.tensor(item["label_idx"], dtype=torch.long)
+        return tensor, label
+
+
+# ──────────────────────────────────────────────
+#  Dataset loader
+# ──────────────────────────────────────────────
 
 def load_dataset(base_path="simulation/datasets/audio"):
     all_samples = []
@@ -86,6 +120,8 @@ def load_dataset(base_path="simulation/datasets/audio"):
                 audio, sr = librosa.load(str(file), sr=22050)
                 features = extract_features(audio, sr)
                 all_samples.append({
+                    "audio": audio,        # kept for augmentation
+                    "sr": sr,
                     "features": features,
                     "label": label,
                     "label_idx": label_idx,
@@ -102,51 +138,9 @@ def load_dataset(base_path="simulation/datasets/audio"):
     return all_samples
 
 
-class AudioCNN(nn.Module):
-    def __init__(self, num_classes: int):
-        super(AudioCNN, self).__init__()
-
-        self.conv_block1 = nn.Sequential(
-            nn.Conv2d(1, 32, kernel_size=3, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-            nn.Dropout2d(0.25),
-        )
-        self.conv_block2 = nn.Sequential(
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-            nn.Dropout2d(0.25),
-        )
-        self.conv_block3 = nn.Sequential(
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-            nn.Dropout2d(0.25),
-        )
-        self.adaptive_pool = nn.AdaptiveAvgPool2d((4, 4))
-        self.classifier = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(128 * 4 * 4, 256),
-            nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(128, num_classes),
-        )
-
-    def forward(self, x):
-        x = self.conv_block1(x)
-        x = self.conv_block2(x)
-        x = self.conv_block3(x)
-        x = self.adaptive_pool(x)
-        x = self.classifier(x)
-        return x
-
+# ──────────────────────────────────────────────
+#  Train
+# ──────────────────────────────────────────────
 
 def train(
     base_path="simulation/datasets/audio",
@@ -168,23 +162,39 @@ def train(
         print("Add .wav files to your dataset folders first.")
         return
 
-    train_samples, val_samples = train_test_split(
-        all_samples,
-        test_size=0.2,
-        random_state=42,
-        stratify=[s["label_idx"] for s in all_samples],
-    )
+    # Stratified split — fall back to plain split if any class has < 2 samples
+    label_indices = [s["label_idx"] for s in all_samples]
+    counts = np.bincount(label_indices, minlength=NUM_CLASSES)
+    can_stratify = all_samples and int(counts.min()) >= 2
+
+    if can_stratify:
+        train_samples, val_samples = train_test_split(
+            all_samples,
+            test_size=0.2,
+            random_state=42,
+            stratify=label_indices,
+        )
+    else:
+        print(
+            "⚠ Some classes have < 2 samples — using non-stratified split."
+        )
+        train_samples, val_samples = train_test_split(
+            all_samples,
+            test_size=0.2,
+            random_state=42,
+        )
 
     print(f"\nTrain samples : {len(train_samples)}")
     print(f"Val samples   : {len(val_samples)}")
 
+    # Augmentation enabled only for training set
     train_loader = DataLoader(
-        AudioDataset(train_samples),
+        AudioDataset(train_samples, augment=True),
         batch_size=batch_size,
         shuffle=True,
     )
     val_loader = DataLoader(
-        AudioDataset(val_samples),
+        AudioDataset(val_samples, augment=False),
         batch_size=batch_size,
         shuffle=False,
     )
@@ -251,10 +261,7 @@ def train(
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             os.makedirs(save_path, exist_ok=True)
-            torch.save(
-                model.state_dict(),
-                f"{save_path}/best_model.pth",
-            )
+            torch.save(model.state_dict(), f"{save_path}/best_model.pth")
             with open(f"{save_path}/labels.json", "w") as f:
                 json.dump(IDX_TO_LABEL, f)
             print(f"  ✓ Best model saved — val acc: {val_acc:.1f}%")
@@ -265,9 +272,15 @@ def train(
     print(f"Model saved to: {save_path}/best_model.pth")
 
 
+# ──────────────────────────────────────────────
+#  Evaluate
+# ──────────────────────────────────────────────
+
 def evaluate(save_path="ai_models/audio/saved_model"):
     device = torch.device(
-        "mps" if torch.backends.mps.is_available() else "cpu"
+        "mps" if torch.backends.mps.is_available()
+        else "cuda" if torch.cuda.is_available()
+        else "cpu"
     )
 
     model_path = f"{save_path}/best_model.pth"
@@ -276,9 +289,7 @@ def evaluate(save_path="ai_models/audio/saved_model"):
         return
 
     model = AudioCNN(num_classes=NUM_CLASSES).to(device)
-    model.load_state_dict(
-        torch.load(model_path, map_location=device)
-    )
+    model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
 
     print("\nEvaluating model on sample files...")

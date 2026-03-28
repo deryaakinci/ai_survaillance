@@ -1,6 +1,7 @@
 import os
 import cv2
 import yaml
+import torch
 import numpy as np
 from pathlib import Path
 from ultralytics import YOLO
@@ -21,6 +22,14 @@ LABELS = [
     "suspicious_package",
 ]
 LABEL_TO_IDX = {label: idx for idx, label in enumerate(LABELS)}
+
+
+def get_device() -> str:
+    if torch.backends.mps.is_available():
+        return "mps"
+    elif torch.cuda.is_available():
+        return "cuda"
+    return "cpu"
 
 
 def prepare_yolo_dataset(
@@ -56,9 +65,7 @@ def prepare_yolo_dataset(
         for video_path in video_files:
             cap = cv2.VideoCapture(str(video_path))
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            frame_indices = np.linspace(
-                0, total_frames - 1, 5, dtype=int
-            )
+            frame_indices = np.linspace(0, total_frames - 1, 5, dtype=int)
 
             for idx in frame_indices:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
@@ -66,9 +73,7 @@ def prepare_yolo_dataset(
                 if not ret:
                     continue
 
-                frame_name = (
-                    f"{label}_{video_path.stem}_frame{idx}"
-                )
+                frame_name = f"{label}_{video_path.stem}_frame{idx}"
                 all_frames.append({
                     "frame": frame,
                     "name": frame_name,
@@ -97,14 +102,10 @@ def prepare_yolo_dataset(
 
     for split, frames in [("train", train_frames), ("val", val_frames)]:
         for item in frames:
-            img_path = (
-                f"{output_path}/images/{split}/{item['name']}.jpg"
-            )
+            img_path = f"{output_path}/images/{split}/{item['name']}.jpg"
             cv2.imwrite(img_path, item["frame"])
 
-            label_path = (
-                f"{output_path}/labels/{split}/{item['name']}.txt"
-            )
+            label_path = f"{output_path}/labels/{split}/{item['name']}.txt"
             with open(label_path, "w") as f:
                 f.write(f"{item['label_idx']} 0.5 0.5 1.0 1.0\n")
 
@@ -154,6 +155,8 @@ def train(
     if yaml_path is None:
         return
 
+    device = get_device()
+    print(f"\nUsing device: {device}")
     print("\nLoading pretrained YOLOv8n...")
     model = YOLO("yolov8n.pt")
 
@@ -173,7 +176,7 @@ def train(
         save=True,
         plots=True,
         verbose=True,
-        device="mps",
+        device=device,
     )
 
     print("\n" + "=" * 55)
@@ -188,9 +191,7 @@ def evaluate(
     source_path="simulation/datasets/video",
     save_path="ai_models/visual/saved_model",
 ):
-    model_path = (
-        f"{save_path}/surveillance_model/weights/best.pt"
-    )
+    model_path = f"{save_path}/surveillance_model/weights/best.pt"
     if not os.path.exists(model_path):
         print("No fine-tuned model found. Run training first.")
         return
@@ -222,9 +223,7 @@ def evaluate(
         if results and results[0].boxes:
             pred_idx = int(results[0].boxes.cls[0])
             predicted = (
-                LABELS[pred_idx]
-                if pred_idx < len(LABELS)
-                else "unknown"
+                LABELS[pred_idx] if pred_idx < len(LABELS) else "unknown"
             )
         else:
             predicted = "normal"
@@ -233,10 +232,7 @@ def evaluate(
         correct += int(is_correct)
         total += 1
         symbol = "✓" if is_correct else "✗"
-        print(
-            f"{symbol} True: {label:<25} "
-            f"Predicted: {predicted}"
-        )
+        print(f"{symbol} True: {label:<25} Predicted: {predicted}")
 
     if total > 0:
         accuracy = 100.0 * correct / total
