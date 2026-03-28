@@ -4,14 +4,21 @@ from backend.database.db import get_db
 from backend.database.models import Alert
 from backend.services.notifier import NotificationService
 from datetime import datetime, timedelta
+import base64
+import hashlib
+import hmac
+import json
+import os
 import uuid
 
 
 router = APIRouter()
 
+SECRET_KEY = os.getenv("SECRET_KEY", "your_secret_key_change_in_production")
+
 
 def get_current_user_id(request: Request) -> str:
-    """Extract user ID from JWT token"""
+    """Extract and VERIFY user ID from JWT token"""
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -19,13 +26,40 @@ def get_current_user_id(request: Request) -> str:
     token = auth_header.split(" ")[1]
 
     try:
-        import base64
-        import json
-        payload_b64 = token.split(".")[0]
+        parts = token.split(".")
+        if len(parts) != 2:
+            raise HTTPException(status_code=401, detail="Invalid token format")
+
+        payload_b64, provided_signature = parts[0], parts[1]
+
+        # --- Verify signature ---
+        expected_signature = hmac.new(
+            SECRET_KEY.encode(),
+            payload_b64.encode(),
+            hashlib.sha256,
+        ).hexdigest()
+
+        if not hmac.compare_digest(expected_signature, provided_signature):
+            raise HTTPException(status_code=401, detail="Invalid token signature")
+
+        # --- Decode payload ---
         payload = json.loads(base64.b64decode(payload_b64 + "=="))
-        return payload.get("user_id", "1")
+
+        # --- Check expiry ---
+        import time
+        if payload.get("exp", 0) < int(time.time()):
+            raise HTTPException(status_code=401, detail="Token expired")
+
+        user_id = payload.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Token missing user_id")
+
+        return user_id
+
+    except HTTPException:
+        raise
     except Exception:
-        return "1"
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 
 @router.get("/")
@@ -68,10 +102,12 @@ async def create_alert(
     visual_label: str,
     severity: str,
     zone: str = "Zone 1",
-    user_id: str = "1",
     request: Request = None,
     db: Session = Depends(get_db),
 ):
+    # Get user_id from token — not from query param
+    user_id = get_current_user_id(request)
+
     alert = Alert(
         id=str(uuid.uuid4()),
         user_id=user_id,
@@ -87,7 +123,7 @@ async def create_alert(
 
     if request and hasattr(request.app.state, "manager"):
         notifier = NotificationService(request.app.state.manager)
-        await notifier.send_alert({
+        await notifier.send_alert(user_id, {
             "id": alert.id,
             "audio_label": audio_label,
             "visual_label": visual_label,

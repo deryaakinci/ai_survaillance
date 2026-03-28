@@ -49,17 +49,19 @@ class NotificationService:
     def __init__(self, manager=None):
         self.manager = manager
 
-    async def send_alert(self, payload: dict):
+    async def send_alert(self, user_id: str, payload: dict):
+        """Send alert only to the user who owns this alert"""
         if self.manager:
-            await self.manager.broadcast({
+            await self.manager.send_to_user(user_id, {
                 "type": "alert",
                 "data": payload,
             })
-            print(f"Alert broadcast: {payload.get('title')}")
+            print(f"Alert sent to user {user_id}: {payload.get('title')}")
 
-    async def send_sensor_status(self, status: dict):
+    async def send_sensor_status(self, user_id: str, status: dict):
+        """Send sensor status only to the relevant user"""
         if self.manager:
-            await self.manager.broadcast({
+            await self.manager.send_to_user(user_id, {
                 "type": "sensor_status",
                 "data": status,
             })
