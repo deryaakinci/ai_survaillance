@@ -22,6 +22,8 @@ LABELS = [
     "threatening_voice",
 ]
 NUM_CLASSES = len(LABELS)
+LABEL_TO_IDX = {label: idx for idx, label in enumerate(LABELS)}
+IDX_TO_LABEL = {idx: label for idx, label in enumerate(LABELS)}
 
 
 class AudioCNN(nn.Module):
