@@ -7,7 +7,8 @@ class ApiService {
   //   Android emulator  → 'http://10.0.2.2:8000'
   //   iOS simulator     → 'http://127.0.0.1:8000'
   //   Real device       → 'http://<your-machine-local-IP>:8000'
-  static const String baseUrl = 'http://10.0.2.2:8000';
+  // Currently configured for iOS simulator + local backend.
+  static const String baseUrl = 'http://127.0.0.1:8001';
 
   final SecureStorageService _storage = SecureStorageService();
   late final Dio _dio;

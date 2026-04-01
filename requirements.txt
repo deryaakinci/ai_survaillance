@@ -63,3 +63,4 @@ ultralytics==8.4.23
 ultralytics-thop==2.0.18
 urllib3==2.6.3
 uvicorn==0.42.0
+bcrypt==5.0.0
