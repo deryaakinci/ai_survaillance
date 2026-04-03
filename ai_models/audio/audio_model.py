@@ -16,7 +16,6 @@ LABELS = [
     "door_forced",
     "crying_distress",
     "fight_sounds",
-    "alarm_triggered",
     "siren",
     "car_crash",
     "threatening_voice",
@@ -154,7 +153,7 @@ class AudioAnomalyDetector:
         ]
         medium = [
             "glass_break", "break_in", "crying_distress",
-            "alarm_triggered", "car_crash",
+            "car_crash",
         ]
         low = ["siren"]
 

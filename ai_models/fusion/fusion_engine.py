@@ -24,7 +24,6 @@ MEDIUM_AUDIO = [
     "glass_break",
     "break_in",
     "crying_distress",
-    "alarm_triggered",
     "car_crash",
 ]
 

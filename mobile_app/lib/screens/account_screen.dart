@@ -96,36 +96,36 @@ class AccountScreen extends StatelessWidget {
                   _menuItem(
                     icon: Icons.notifications_outlined,
                     label: 'Notifications',
-                    onTap: () {},
+                    onTap: () => _comingSoon(context, 'Notifications'),
                   ),
                   _menuItem(
                     icon: Icons.history,
                     label: 'Storage — 30 days',
-                    onTap: () {},
+                    onTap: () => _comingSoon(context, 'Storage'),
                   ),
                   const SizedBox(height: 16),
                   _sectionTitle('Account'),
                   _menuItem(
                     icon: Icons.person_outline,
                     label: 'Edit profile',
-                    onTap: () {},
+                    onTap: () => _comingSoon(context, 'Edit profile'),
                   ),
                   _menuItem(
                     icon: Icons.lock_outline,
                     label: 'Change password',
-                    onTap: () {},
+                    onTap: () => _comingSoon(context, 'Change password'),
                   ),
                   const SizedBox(height: 16),
                   _sectionTitle('Support'),
                   _menuItem(
                     icon: Icons.help_outline,
                     label: 'Help center',
-                    onTap: () {},
+                    onTap: () => _comingSoon(context, 'Help center'),
                   ),
                   _menuItem(
                     icon: Icons.info_outline,
                     label: 'About',
-                    onTap: () {},
+                    onTap: () => _comingSoon(context, 'About'),
                   ),
                   const SizedBox(height: 16),
                   GestureDetector(
@@ -182,42 +182,59 @@ class AccountScreen extends StatelessWidget {
     required String label,
     required VoidCallback onTap,
   }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.symmetric(
-          horizontal: 14,
-          vertical: 14,
-        ),
-        decoration: BoxDecoration(
-          color: const Color(0xFF13131F),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: const Color(0xFF13131F),
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          onTap: onTap,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: const Color(0xFF222222),
-            width: 0.5,
-          ),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, color: const Color(0xFF7F77DD), size: 18),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                label,
-                style: const TextStyle(
-                  fontSize: 13,
-                  color: Color(0xFFE0E0E0),
-                ),
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: 14,
+            ),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: const Color(0xFF222222),
+                width: 0.5,
               ),
             ),
-            const Icon(
-              Icons.arrow_forward_ios,
-              color: Color(0xFF333333),
-              size: 12,
+            child: Row(
+              children: [
+                Icon(icon, color: const Color(0xFF7F77DD), size: 18),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: Color(0xFFE0E0E0),
+                    ),
+                  ),
+                ),
+                const Icon(
+                  Icons.arrow_forward_ios,
+                  color: Color(0xFF333333),
+                  size: 12,
+                ),
+              ],
             ),
-          ],
+          ),
         ),
+      ),
+    );
+  }
+
+  void _comingSoon(BuildContext context, String feature) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$feature — coming soon'),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFF13131F),
       ),
     );
   }

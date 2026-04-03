@@ -5,7 +5,7 @@ from ai_models.fusion.alert_logic import AlertLogic
 from simulation.scenarios import (
     normal, gunshot, explosion, scream,
     glass_break, break_in, door_forced,
-    crying_distress, fight_sounds, alarm_triggered,
+    crying_distress, fight_sounds,
     siren, car_crash, threatening_voice,
     intruder_detected, weapon_detected,
     multiple_intruders, vehicle_intrusion,
@@ -17,7 +17,7 @@ from simulation.scenarios import (
 ALL_SCENARIOS = [
     normal, gunshot, explosion, scream,
     glass_break, break_in, door_forced,
-    crying_distress, fight_sounds, alarm_triggered,
+    crying_distress, fight_sounds,
     siren, car_crash, threatening_voice,
     intruder_detected, weapon_detected,
     multiple_intruders, vehicle_intrusion,

@@ -19,7 +19,6 @@ class AudioDatasetLoader:
             "door_forced",
             "crying_distress",
             "fight_sounds",
-            "alarm_triggered",
             "siren",
             "car_crash",
             "threatening_voice",

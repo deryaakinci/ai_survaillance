@@ -79,7 +79,6 @@ class AlertLogic:
             "door_forced": "Door being forced",
             "crying_distress": "Distress detected",
             "fight_sounds": "Fight detected",
-            "alarm_triggered": "Alarm triggered",
             "siren": "Emergency siren nearby",
             "car_crash": "Car crash detected",
             "threatening_voice": "Threatening voice detected",
