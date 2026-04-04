@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Float, DateTime, Boolean
+from sqlalchemy import Column, String, Float, DateTime, Boolean, Integer
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
 import uuid
@@ -14,9 +14,12 @@ class Event(Base):
     timestamp = Column(DateTime, default=datetime.utcnow)
     audio_label = Column(String)
     visual_label = Column(String)
+    audio_confidence = Column(Float, default=0.0)
+    visual_confidence = Column(Float, default=0.0)
     fusion_score = Column(Float)
     alert_fired = Column(Boolean, default=False)
     zone = Column(String, default="Zone 1")
+    total_events_in_chunk = Column(Integer, default=1)
 
 
 class Alert(Base):

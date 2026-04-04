@@ -74,25 +74,28 @@ class AnalyticsScreen extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 8),
+                  // ── Top stat cards — uses backend data ──────────
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     child: Row(
                       children: [
                         _miniStatCard(
-                          provider.alerts.length.toString(),
+                          provider.totalAlerts.toString(),
                           'Total alerts',
                           const Color(0xFFE24B4A),
                         ),
                         const SizedBox(width: 8),
                         _miniStatCard(
-                          '${provider.todayAlerts.length}',
+                          provider.alertsToday.toString(),
                           'Today',
                           const Color(0xFFEF9F27),
                         ),
                         const SizedBox(width: 8),
                         _miniStatCard(
-                          '98%',
-                          'Accuracy',
+                          provider.accuracy != null
+                              ? '${provider.accuracy!.toStringAsFixed(0)}%'
+                              : '–',
+                          'AI Accuracy',
                           const Color(0xFF1D9E75),
                         ),
                       ],
@@ -101,7 +104,7 @@ class AnalyticsScreen extends StatelessWidget {
                   const SizedBox(height: 8),
                   _breakdownCard(provider),
                   const SizedBox(height: 8),
-                  _heatmapCard(),
+                  _heatmapCard(provider),
                   const SizedBox(height: 24),
                 ],
               ),
@@ -153,17 +156,17 @@ class AnalyticsScreen extends StatelessWidget {
   }
 
   Widget _breakdownCard(AlertProvider provider) {
-final types = [
-  {'label': 'Gunshot', 'color': const Color(0xFF7F77DD), 'key': 'gunshot'},
-  {'label': 'Explosion', 'color': const Color(0xFFE24B4A), 'key': 'explosion'},
-  {'label': 'Scream', 'color': const Color(0xFFEF9F27), 'key': 'scream'},
-  {'label': 'Break in', 'color': const Color(0xFF1D9E75), 'key': 'break_in'},
-  {'label': 'Glass break', 'color': const Color(0xFF85B7EB), 'key': 'glass_break'},
-  {'label': 'Fight', 'color': const Color(0xFFD85A30), 'key': 'fight'},
-  {'label': 'Door forced', 'color': const Color(0xFFD4537E), 'key': 'door_forced'},
-  {'label': 'Weapon', 'color': const Color(0xFF5DCAA5), 'key': 'weapon'},
-];
-    final total = provider.alerts.length;
+    final types = [
+      {'label': 'Gunshot', 'color': const Color(0xFF7F77DD), 'key': 'gunshot'},
+      {'label': 'Explosion', 'color': const Color(0xFFE24B4A), 'key': 'explosion'},
+      {'label': 'Scream', 'color': const Color(0xFFEF9F27), 'key': 'scream'},
+      {'label': 'Break in', 'color': const Color(0xFF1D9E75), 'key': 'break_in'},
+      {'label': 'Glass break', 'color': const Color(0xFF85B7EB), 'key': 'glass_break'},
+      {'label': 'Fight', 'color': const Color(0xFFD85A30), 'key': 'fight'},
+      {'label': 'Door forced', 'color': const Color(0xFFD4537E), 'key': 'door_forced'},
+      {'label': 'Weapon', 'color': const Color(0xFF5DCAA5), 'key': 'weapon'},
+    ];
+    final total = provider.totalAlerts;
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12),
@@ -214,7 +217,7 @@ final types = [
                     borderRadius: BorderRadius.circular(4),
                     child: LinearProgressIndicator(
                       value: pct,
-                      backgroundColor: color.withOpacity(0.1),
+                      backgroundColor: color.withValues(alpha: 0.1),
                       valueColor: AlwaysStoppedAnimation<Color>(color),
                       minHeight: 5,
                     ),
@@ -228,12 +231,12 @@ final types = [
     );
   }
 
-  Widget _heatmapCard() {
-    final hours = [
-      4, 3, 2, 3, 2, 3, 8, 14, 10, 4, 3, 3,
-      18, 12, 4, 3, 2, 3, 2, 2, 3, 2, 3, 2
-    ];
-    final maxVal = hours.reduce((a, b) => a > b ? a : b);
+  Widget _heatmapCard(AlertProvider provider) {
+    final hours = provider.hourly;
+    final maxVal = hours.isNotEmpty
+        ? hours.reduce((a, b) => a > b ? a : b)
+        : 1;
+    final safeMax = maxVal > 0 ? maxVal : 1;
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12),
@@ -256,8 +259,8 @@ final types = [
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: hours.map((v) {
-                final h = (v / maxVal * 36).clamp(2.0, 36.0);
-                final isPeak = v == maxVal;
+                final h = (v / safeMax * 36).clamp(2.0, 36.0);
+                final isPeak = v == maxVal && v > 0;
                 return Expanded(
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 1),

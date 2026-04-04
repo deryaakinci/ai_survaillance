@@ -108,9 +108,32 @@ class ApiService {
         '/stats',
         queryParameters: {'days': days},
       );
-      return response.data;
+      final data = Map<String, dynamic>.from(response.data);
+      // Ensure nested types are properly cast
+      if (data['alert_types'] != null) {
+        data['alert_types'] = Map<String, dynamic>.from(data['alert_types']);
+      }
+      if (data['hourly'] != null) {
+        data['hourly'] = List<int>.from(
+          (data['hourly'] as List).map((e) => (e as num).toInt()),
+        );
+      }
+      return data;
     } catch (e) {
-      return {'total': 12, 'accuracy': 98};
+      return {
+        'total': 0,
+        'today': 0,
+        'accuracy': null,
+        'audio_accuracy': null,
+        'visual_accuracy': null,
+        'total_events': 0,
+        'high': 0,
+        'medium': 0,
+        'low': 0,
+        'days': days,
+        'alert_types': <String, dynamic>{},
+        'hourly': List<int>.filled(24, 0),
+      };
     }
   }
 
