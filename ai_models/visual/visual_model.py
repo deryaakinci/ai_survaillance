@@ -8,12 +8,12 @@ LABELS = [
     "normal",
     "intruder_detected",
     "weapon_detected",
-    "multiple_intruders",
+    "explosion",
     "vehicle_intrusion",
-    "loitering",
+    "abuse",
     "fighting",
-    "crowd_detected",
-    "masked_person",
+    "assault",
+    "robbery",
     "person_down",
     "forced_entry",
     "suspicious_package",
@@ -114,11 +114,11 @@ class VisualAnomalyDetector:
         if person_count >= 1 and self._check_person_down(detections):
             return {"label": "person_down", "confidence": 0.91}
         if person_count >= 4:
-            return {"label": "crowd_detected", "confidence": round(min(0.70 + person_count * 0.05, 0.97), 3)}
+            return {"label": "assault", "confidence": round(min(0.70 + person_count * 0.05, 0.97), 3)}
         if person_count in [2, 3]:
-            return {"label": "multiple_intruders", "confidence": round(min(0.65 + person_count * 0.07, 0.95), 3)}
+            return {"label": "explosion", "confidence": round(min(0.65 + person_count * 0.07, 0.95), 3)}
         if person_count == 1 and is_dark:
-            return {"label": "masked_person", "confidence": 0.87}
+            return {"label": "robbery", "confidence": 0.87}
         if person_count == 1:
             return {"label": "intruder_detected", "confidence": 0.88}
         if has_backpack and person_count == 0:
@@ -155,14 +155,14 @@ class VisualAnomalyDetector:
 
     def get_severity(self, label: str) -> str:
         high = [
-            "weapon_detected", "person_down", "multiple_intruders",
-            "masked_person", "forced_entry",
+            "weapon_detected", "person_down", "explosion",
+            "robbery", "forced_entry", "assault", "abuse"
         ]
         medium = [
-            "intruder_detected", "crowd_detected", "vehicle_intrusion",
+            "intruder_detected", "vehicle_intrusion",
             "fighting", "suspicious_package",
         ]
-        low = ["loitering"]
+        low = []
 
         if label in high:
             return "high"

@@ -1,3 +1,27 @@
+# --- AI DATASETS (Crucial to ignore) ---
+# This ignores everything inside your audio and video folders
+simulation/datasets/audio/
+simulation/datasets/video/
+
+# Backup: Ignore all media formats anywhere in the project
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.wav
+*.mp3
+*.flac
+*.zip
+
+# --- AI MODELS & WEIGHTS ---
+# These files get huge; only push them if they are <50MB
+*.pt
+*.pth
+*.h5
+*.weights
+*.onnx
+
+# --- PYTHON & BACKEND ---
 venv/
 .venv/
 __pycache__/
@@ -7,6 +31,15 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+
+# --- MOBILE APP (Flutter/Dart) ---
 .dart_tool/
 mobile_app/build/
 *.iml
+.pub-cache/
+.packages
+
+# --- IDE & SYSTEM ---
+.vscode/
+.idea/
+Thumbs.db

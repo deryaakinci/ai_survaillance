@@ -8,9 +8,9 @@ from simulation.scenarios import (
     crying_distress, fight_sounds,
     siren, car_crash, threatening_voice,
     intruder_detected, weapon_detected,
-    multiple_intruders, vehicle_intrusion,
-    loitering, fighting, crowd_detected,
-    masked_person, person_down,
+    visual_explosion, vehicle_intrusion,
+    abuse, fighting, assault,
+    robbery, person_down,
     forced_entry, suspicious_package,
 )
 
@@ -20,9 +20,9 @@ ALL_SCENARIOS = [
     crying_distress, fight_sounds,
     siren, car_crash, threatening_voice,
     intruder_detected, weapon_detected,
-    multiple_intruders, vehicle_intrusion,
-    loitering, fighting, crowd_detected,
-    masked_person, person_down,
+    visual_explosion, vehicle_intrusion,
+    abuse, fighting, assault,
+    robbery, person_down,
     forced_entry, suspicious_package,
 ]
 

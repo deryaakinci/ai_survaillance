@@ -16,8 +16,10 @@ CRITICAL_VISUAL = [
 HIGH_AUDIO = CRITICAL_AUDIO  # same set
 
 HIGH_VISUAL = CRITICAL_VISUAL + [
-    "multiple_intruders",
-    "masked_person",
+    "explosion",
+    "robbery",
+    "assault",
+    "abuse",
 ]
 
 MEDIUM_AUDIO = [
@@ -29,7 +31,6 @@ MEDIUM_AUDIO = [
 
 MEDIUM_VISUAL = [
     "intruder_detected",
-    "crowd_detected",
     "vehicle_intrusion",
     "fighting",
     "suspicious_package",
