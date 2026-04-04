@@ -16,14 +16,10 @@ class StatCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Expanded(
       child: Container(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
         decoration: BoxDecoration(
-          color: const Color(0xFF13131F),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: const Color(0xFF222222),
-            width: 0.5,
-          ),
+          color: const Color(0xFF161622),
+          borderRadius: BorderRadius.circular(16),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -36,20 +32,23 @@ class StatCard extends StatelessWidget {
                 shape: BoxShape.circle,
               ),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 16),
             Text(
               number,
               style: const TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.w700,
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
                 color: Colors.white,
               ),
             ),
+            const SizedBox(height: 6),
             Text(
-              label,
+              label.replaceAll(' ', '\n'), // Splits "This week" to multiple lines
               style: const TextStyle(
-                fontSize: 10,
-                color: Color(0xFF666666),
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF888888),
+                height: 1.3,
               ),
             ),
           ],

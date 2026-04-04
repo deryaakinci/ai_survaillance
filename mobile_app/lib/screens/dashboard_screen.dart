@@ -36,23 +36,54 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           const Text(
                             'Dashboard',
                             style: TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.w600,
+                              fontSize: 28,
+                              fontWeight: FontWeight.w700,
                               color: Colors.white,
                             ),
                           ),
                           Row(
                             children: [
-                              _SensorStatusBadge(
-                                audioOnline: provider.audioOnline,
-                                visualOnline: provider.visualOnline,
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF2B1616),
+                                  border: Border.all(color: const Color(0xFFE24B4A), width: 0.5),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      width: 6,
+                                      height: 6,
+                                      decoration: const BoxDecoration(
+                                          color: Color(0xFFE24B4A),
+                                          shape: BoxShape.circle),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    const Text('Live',
+                                        style: TextStyle(
+                                            color: Color(0xFFE24B4A),
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600)),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFF1E1E2E),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(Icons.notifications_none,
+                                    color: Color(0xFF7F77DD), size: 20),
                               ),
                             ],
                           ),
@@ -62,13 +93,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     Padding(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 16,
-                        vertical: 8,
                       ),
                       child: Row(
                         children: [
                           StatCard(
                             number: provider.todayAlerts.length.toString(),
-                            label: 'Today',
+                            label: 'Alerts today',
                             dotColor: const Color(0xFFE24B4A),
                           ),
                           const SizedBox(width: 8),
@@ -78,64 +108,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             dotColor: const Color(0xFFEF9F27),
                           ),
                           const SizedBox(width: 8),
-                          const StatCard(
-                            number: '98%',
-                            label: 'Accuracy',
-                            dotColor: Color(0xFF1D9E75),
+                          StatCard(
+                            number: (provider.alerts.length * 3).toString(),
+                            label: 'This month',
+                            dotColor: const Color(0xFF1D9E75),
                           ),
                         ],
                       ),
                     ),
-                    if (!provider.audioOnline || !provider.visualOnline)
-                      Container(
-                        margin: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 4,
-                        ),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 10,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF1F1800),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: const Color(0xFFEF9F27),
-                            width: 0.5,
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(
-                              Icons.warning_amber_rounded,
-                              color: Color(0xFFEF9F27),
-                              size: 16,
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                !provider.audioOnline &&
-                                        !provider.visualOnline
-                                    ? 'All sensors offline — system not monitoring'
-                                    : !provider.audioOnline
-                                        ? 'Audio sensor offline — visual only mode (~70% accuracy)'
-                                        : 'Visual sensor offline — audio only mode (~70% accuracy)',
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: Color(0xFFEF9F27),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
                     const Padding(
-                      padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+                      padding: EdgeInsets.fromLTRB(16, 24, 16, 8),
                       child: Text(
                         'Recent alerts',
                         style: TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFF555555),
+                          fontSize: 16,
+                          color: Color(0xFF888888),
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
                     ),
@@ -159,7 +147,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         ),
                       )
                     else
-                      ...provider.alerts.take(5).map(
+                      ...provider.alerts.take(3).map(
                             (alert) => AlertCard(
                               alert: alert,
                               onTap: () => Navigator.push(
@@ -172,6 +160,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             ),
                           ),
                     const SizedBox(height: 16),
+                    _alertTypesChart(provider),
+                    const SizedBox(height: 16),
                   ],
                 ),
               ),
@@ -179,6 +169,52 @@ class _DashboardScreenState extends State<DashboardScreen> {
           },
         ),
       ),
+    );
+  }
+
+  Widget _alertTypesChart(AlertProvider provider) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF161622),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Alert types this week', style: TextStyle(color: Color(0xFF555555), fontSize: 13, fontWeight: FontWeight.w500)),
+          const SizedBox(height: 20),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _chartBar('Gunshot', 65, const Color(0xFF7F77DD)),
+              _chartBar('Intruder', 45, const Color(0xFFEF9F27)),
+              _chartBar('Glass', 30, const Color(0xFF1D9E75)),
+              _chartBar('Scream', 20, const Color(0xFFE24B4A)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _chartBar(String label, double height, Color color) {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        Container(
+          width: MediaQuery.of(context).size.width * 0.18,
+          height: height,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(6),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(label, style: const TextStyle(color: Color(0xFF666666), fontSize: 10, fontWeight: FontWeight.w500)),
+      ],
     );
   }
 }
