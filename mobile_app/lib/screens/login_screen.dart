@@ -26,7 +26,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final auth = context.read<AuthProvider>();
     await auth.login(
       _emailController.text.trim(),
-      _passwordController.text.trim(),
+      _passwordController.text,
     );
   }
 
@@ -81,7 +81,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 label: 'Email',
                 hint: 'your@email.com',
                 icon: Icons.email_outlined,
-                keyboardType: TextInputType.emailAddress,
+                forEmail: true,
               ),
               const SizedBox(height: 16),
               _inputField(
@@ -198,6 +198,7 @@ class _LoginScreenState extends State<LoginScreen> {
     required String hint,
     required IconData icon,
     bool obscure = false,
+    bool forEmail = false,
     TextInputType keyboardType = TextInputType.text,
     Widget? suffixIcon,
   }) {
@@ -225,7 +226,24 @@ class _LoginScreenState extends State<LoginScreen> {
           child: TextField(
             controller: controller,
             obscureText: obscure,
-            keyboardType: keyboardType,
+            keyboardType: forEmail ? TextInputType.text : keyboardType,
+            autocorrect: !(forEmail || obscure),
+            enableSuggestions: !(forEmail || obscure),
+            textCapitalization: (forEmail || obscure)
+                ? TextCapitalization.none
+                : TextCapitalization.sentences,
+            enableInteractiveSelection: true,
+            smartDashesType: (forEmail || obscure)
+                ? SmartDashesType.disabled
+                : SmartDashesType.enabled,
+            smartQuotesType: (forEmail || obscure)
+                ? SmartQuotesType.disabled
+                : SmartQuotesType.enabled,
+            autofillHints: forEmail
+                ? const [AutofillHints.email]
+                : obscure
+                    ? const [AutofillHints.password]
+                    : null,
             style: const TextStyle(
               color: Colors.white,
               fontSize: 14,

@@ -92,28 +92,16 @@ class AccountScreen extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  _sectionTitle('System'),
-                  _menuItem(
-                    icon: Icons.notifications_outlined,
-                    label: 'Notifications',
-                    onTap: () => _comingSoon(context, 'Notifications'),
-                  ),
-                  _menuItem(
-                    icon: Icons.history,
-                    label: 'Storage — 30 days',
-                    onTap: () => _comingSoon(context, 'Storage'),
-                  ),
-                  const SizedBox(height: 16),
                   _sectionTitle('Account'),
                   _menuItem(
                     icon: Icons.person_outline,
                     label: 'Edit profile',
-                    onTap: () => _comingSoon(context, 'Edit profile'),
+                    onTap: () => _showEditProfileDialog(context, auth),
                   ),
                   _menuItem(
                     icon: Icons.lock_outline,
                     label: 'Change password',
-                    onTap: () => _comingSoon(context, 'Change password'),
+                    onTap: () => _showChangePasswordDialog(context, auth),
                   ),
                   const SizedBox(height: 16),
                   _sectionTitle('Support'),
@@ -224,6 +212,136 @@ class AccountScreen extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  void _showEditProfileDialog(BuildContext context, AuthProvider auth) {
+    final nameController = TextEditingController(text: auth.user?.name);
+    
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF13131F),
+        title: const Text('Edit Profile', style: TextStyle(color: Colors.white, fontSize: 18)),
+        content: TextField(
+          controller: nameController,
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+            labelText: 'Name',
+            labelStyle: TextStyle(color: Color(0xFF7F77DD)),
+            enabledBorder: UnderlineInputBorder(
+              borderSide: BorderSide(color: Color(0xFF555555)),
+            ),
+            focusedBorder: UnderlineInputBorder(
+              borderSide: BorderSide(color: Color(0xFF7F77DD)),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: Color(0xFF555555))),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF7F77DD),
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () async {
+              final success = await auth.updateProfile(nameController.text);
+              if (success && ctx.mounted) {
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Profile updated successfully'), backgroundColor: Colors.green),
+                );
+              } else if (auth.errorMessage != null && ctx.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(auth.errorMessage!), backgroundColor: Colors.red),
+                );
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showChangePasswordDialog(BuildContext context, AuthProvider auth) {
+    final currentPasswordController = TextEditingController();
+    final newPasswordController = TextEditingController();
+    
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF13131F),
+        title: const Text('Change Password', style: TextStyle(color: Colors.white, fontSize: 18)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: currentPasswordController,
+              obscureText: true,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'Current Password',
+                labelStyle: TextStyle(color: Color(0xFF7F77DD)),
+                enabledBorder: UnderlineInputBorder(
+                  borderSide: BorderSide(color: Color(0xFF555555)),
+                ),
+                focusedBorder: UnderlineInputBorder(
+                  borderSide: BorderSide(color: Color(0xFF7F77DD)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: newPasswordController,
+              obscureText: true,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'New Password',
+                labelStyle: TextStyle(color: Color(0xFF7F77DD)),
+                enabledBorder: UnderlineInputBorder(
+                  borderSide: BorderSide(color: Color(0xFF555555)),
+                ),
+                focusedBorder: UnderlineInputBorder(
+                  borderSide: BorderSide(color: Color(0xFF7F77DD)),
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: Color(0xFF555555))),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF7F77DD),
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () async {
+              final success = await auth.changePassword(
+                currentPasswordController.text, 
+                newPasswordController.text
+              );
+              if (success && ctx.mounted) {
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Password changed successfully'), backgroundColor: Colors.green),
+                );
+              } else if (auth.errorMessage != null && ctx.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(auth.errorMessage!), backgroundColor: Colors.red),
+                );
+              }
+            },
+            child: const Text('Change'),
+          ),
+        ],
       ),
     );
   }

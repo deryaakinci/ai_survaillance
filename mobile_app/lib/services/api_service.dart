@@ -8,7 +8,7 @@ class ApiService {
   //   iOS simulator     → 'http://127.0.0.1:8000'
   //   Real device       → 'http://<your-machine-local-IP>:8000'
   // Currently configured for iOS simulator + local backend.
-  static const String baseUrl = 'http://127.0.0.1:8001';
+  static const String baseUrl = 'http://127.0.0.1:8000';
 
   final SecureStorageService _storage = SecureStorageService();
   late final Dio _dio;
@@ -59,6 +59,24 @@ class ApiService {
       await _storage.saveUserEmail(email);
     }
     return response.data;
+  }
+
+  Future<void> updateProfile(String name) async {
+    await _dio.put(
+      '/auth/profile',
+      data: {'name': name},
+    );
+    await _storage.saveUserName(name);
+  }
+
+  Future<void> changePassword(String currentPassword, String newPassword) async {
+    await _dio.put(
+      '/auth/password',
+      data: {
+        'current_password': currentPassword,
+        'new_password': newPassword,
+      },
+    );
   }
 
   Future<Map<String, dynamic>> signup(

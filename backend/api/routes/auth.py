@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from backend.database.db import get_db
@@ -11,6 +12,9 @@ import json
 import time
 import uuid
 import os
+
+from backend.api.routes.events import get_current_user_id
+from fastapi import Request
 
 router = APIRouter()
 
@@ -55,15 +59,16 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 @router.post("/login")
 def login(request: LoginRequest, db: Session = Depends(get_db)):
-    if not request.email or len(request.password) < 6:
+    email_norm = (request.email or "").strip().lower()
+    if not email_norm or not request.password:
         raise HTTPException(
             status_code=400,
             detail="Invalid email or password",
         )
 
-    # Find user in database
+    # Find user in database (case-insensitive email)
     user = db.query(User).filter(
-        User.email == request.email
+        func.lower(User.email) == email_norm
     ).first()
 
     if not user:
@@ -91,15 +96,17 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
 
 @router.post("/signup")
 def signup(request: SignupRequest, db: Session = Depends(get_db)):
-    if not request.name or not request.email or len(request.password) < 6:
+    email_norm = (request.email or "").strip().lower()
+    name_clean = (request.name or "").strip()
+    if not name_clean or not email_norm or len(request.password) < 6:
         raise HTTPException(
             status_code=400,
             detail="Please fill all fields correctly",
         )
 
-    # Check if email already exists
+    # Check if email already exists (case-insensitive)
     existing = db.query(User).filter(
-        User.email == request.email
+        func.lower(User.email) == email_norm
     ).first()
 
     if existing:
@@ -111,8 +118,8 @@ def signup(request: SignupRequest, db: Session = Depends(get_db)):
     # Create new user
     user = User(
         id=str(uuid.uuid4()),
-        name=request.name,
-        email=request.email,
+        name=name_clean,
+        email=email_norm,
         password_hash=hash_password(request.password),
     )
     db.add(user)
@@ -127,3 +134,54 @@ def signup(request: SignupRequest, db: Session = Depends(get_db)):
         "email": user.email,
         "token": token,
     }
+
+
+class UpdateProfileRequest(BaseModel):
+    name: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.put("/profile")
+def update_profile(
+    request_data: UpdateProfileRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user_id = get_current_user_id(request)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    name_clean = request_data.name.strip()
+    if not name_clean:
+        raise HTTPException(status_code=400, detail="Name cannot be empty")
+
+    user.name = name_clean
+    db.commit()
+    return {"message": "Profile updated successfully", "name": user.name}
+
+
+@router.put("/password")
+def change_password(
+    request_data: ChangePasswordRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user_id = get_current_user_id(request)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if not verify_password(request_data.current_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Incorrect current password")
+
+    if len(request_data.new_password) < 6:
+        raise HTTPException(status_code=400, detail="New password must be at least 6 characters")
+
+    user.password_hash = hash_password(request_data.new_password)
+    db.commit()
+    return {"message": "Password updated successfully"}

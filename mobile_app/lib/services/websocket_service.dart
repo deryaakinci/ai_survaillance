@@ -36,7 +36,7 @@ class WebSocketService extends ChangeNotifier {
       final userId = await _storage.getUserId() ?? '1';
 
       _channel = WebSocketChannel.connect(
-        Uri.parse('ws://127.0.0.1:8001/ws/$userId'),
+        Uri.parse('ws://127.0.0.1:8000/ws/$userId'),
       );
 
       isConnected = true;
