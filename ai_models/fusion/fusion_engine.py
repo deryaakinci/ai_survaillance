@@ -1,128 +1,107 @@
-CRITICAL_AUDIO = [
-    "gunshot",
-    "explosion",
-    "scream",
-    "fight_sounds",
-    "door_forced",
-    "threatening_voice",
-]
-
-CRITICAL_VISUAL = [
-    "weapon_detected",
-    "person_down",
-    "forced_entry",
-]
-
-HIGH_AUDIO = CRITICAL_AUDIO  # same set
-
-HIGH_VISUAL = CRITICAL_VISUAL + [
-    "explosion",
-    "robbery",
-    "assault",
-    "abuse",
-]
-
-MEDIUM_AUDIO = [
-    "glass_break",
-    "break_in",
-    "crying_distress",
-    "car_crash",
-]
-
-MEDIUM_VISUAL = [
-    "intruder_detected",
-    "vehicle_intrusion",
-    "fighting",
-    "suspicious_package",
-]
-
+import torch
+import numpy as np
+import time
+from datetime import datetime
 
 class FusionEngine:
-    def fuse(
-        self,
-        audio_result: dict,
-        visual_result: dict,
-    ) -> dict:
-        audio_label = audio_result.get("label", "normal")
-        visual_label = visual_result.get("label", "normal")
-        audio_conf = audio_result.get("confidence", 0.0)
-        visual_conf = visual_result.get("confidence", 0.0)
+    def __init__(self):
+        # 1. M4 Pro Hardware Acceleration
+        self.device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+        print(f"🚀 Fusion Engine active on: {self.device}")
 
-        audio_normal = audio_label == "normal"
-        visual_normal = visual_label == "normal"
+        # 2. Abandoned Object Parameters
+        self.STATIONARY_TIME_LIMIT = 60    # Seconds before marking as suspicious
+        self.ABANDON_DISTANCE_METERS = 5.0 # Distance owner must be away
+        self.STATIONARY_TOLERANCE = 0.05   # Movement threshold (pixels/units)
 
-        # Short-circuit — both normal, nothing to do
-        if audio_normal and visual_normal:
-            return {
-                "alert": False,
-                "severity": "low",
-                "fused_score": 0.0,
-                "audio_label": "normal",
-                "visual_label": "normal",
-                "zone": "Zone 1",
-            }
+        # 3. Memory for Persistence
+        # {obj_id: {"start_time": float, "last_pos": (x,y), "alert_sent": bool}}
+        self.tracked_objects = {}
+        # {bag_id: person_id}
+        self.ownership_registry = {}
 
-        # Normal detections contribute 0.0 — not their "normal" confidence
-        audio_score = 0.0 if audio_normal else audio_conf
-        visual_score = 0.0 if visual_normal else visual_conf
+    def process_frame(self, detections, current_time):
+        """
+        Input: List of dicts [{'id': int, 'label': str, 'bbox': [x1, y1, x2, y2]}]
+        Returns: List of active alerts
+        """
+        alerts = []
+        
+        # Separate entities
+        people = [d for d in detections if d['label'] == 'person']
+        bags = [d for d in detections if d['label'] in ['bag', 'suitcase', 'backpack']]
 
-        # Weighted fusion
-        fused_score = (audio_score * 0.55) + (visual_score * 0.45)
+        for bag in bags:
+            b_id = bag['id']
+            b_center = self._get_center(bag['bbox'])
 
-        # Critical labels always fire immediately regardless of fused score
-        is_critical = (
-            audio_label in CRITICAL_AUDIO
-            or visual_label in CRITICAL_VISUAL
-        )
+            # --- STEP 1: Identification (Who owns this?) ---
+            if b_id not in self.ownership_registry:
+                owner = self._find_nearest_person(b_center, people)
+                if owner:
+                    self.ownership_registry[b_id] = owner['id']
 
-        if is_critical:
-            alert = True
-        elif audio_normal or visual_normal:
-            # Only one sensor detected something — needs high confidence
-            alert = fused_score > 0.75
-        else:
-            # Both sensors detected something — lower threshold
-            alert = fused_score > 0.55
+            # --- STEP 2: Stationary Check ---
+            if b_id not in self.tracked_objects:
+                self.tracked_objects[b_id] = {
+                    "last_pos": b_center,
+                    "stationary_since": current_time,
+                    "alert_sent": False
+                }
+            else:
+                # Check if it moved since the last frame
+                move_dist = self._calculate_dist(b_center, self.tracked_objects[b_id]["last_pos"])
+                if move_dist > self.STATIONARY_TOLERANCE:
+                    # Reset timer because the bag is being carried or moved
+                    self.tracked_objects[b_id]["stationary_since"] = current_time
+                
+                self.tracked_objects[b_id]["last_pos"] = b_center
 
-        severity = self._get_severity(
-            audio_label, visual_label, audio_normal, visual_normal
-        )
+            # --- STEP 3: Abandonment Logic ---
+            stationary_duration = current_time - self.tracked_objects[b_id]["stationary_since"]
+            owner_id = self.ownership_registry.get(b_id)
+            
+            # Find where the owner is now
+            owner_data = next((p for p in people if p['id'] == owner_id), None)
+            
+            if owner_data:
+                o_center = self._get_center(owner_data['bbox'])
+                current_gap = self._calculate_dist(b_center, o_center)
+            else:
+                # Owner has left the camera view entirely
+                current_gap = 999.0 
 
+            # FINAL TRIGGER: Still for 60s AND Owner is far/gone
+            if stationary_duration >= self.STATIONARY_TIME_LIMIT and current_gap > self.ABANDON_DISTANCE_METERS:
+                if not self.tracked_objects[b_id]["alert_sent"]:
+                    alerts.append(self._create_alert(bag, b_center))
+                    self.tracked_objects[b_id]["alert_sent"] = True
+
+        return alerts
+
+    def _calculate_dist(self, p1, p2):
+        """ Euclidean Distance: $\sqrt{(x_2-x_1)^2 + (y_2-y_1)^2}$ """
+        return np.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
+
+    def _get_center(self, bbox):
+        return ((bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2)
+
+    def _find_nearest_person(self, bag_pos, people):
+        best_match = None
+        min_dist = 2.0 # Must be within 2 units to "own" the bag
+        for p in people:
+            p_pos = self._get_center(p['bbox'])
+            d = self._calculate_dist(bag_pos, p_pos)
+            if d < min_dist:
+                min_dist = d
+                best_match = p
+        return best_match
+
+    def _create_alert(self, bag, pos):
         return {
-            "alert": alert,
-            "severity": severity,
-            "fused_score": round(fused_score, 3),
-            "audio_label": audio_label,
-            "visual_label": visual_label,
-            "zone": "Zone 1",
+            "event": "ABANDONED_OBJECT",
+            "object": bag['label'],
+            "id": bag['id'],
+            "location": pos,
+            "timestamp": datetime.now().isoformat()
         }
-
-    def _get_severity(
-        self,
-        audio_label: str,
-        visual_label: str,
-        audio_normal: bool,
-        visual_normal: bool,
-    ) -> str:
-        audio_high = audio_label in HIGH_AUDIO
-        visual_high = visual_label in HIGH_VISUAL
-        audio_medium = audio_label in MEDIUM_AUDIO
-        visual_medium = visual_label in MEDIUM_VISUAL
-
-        # Either sensor flags high → high
-        if audio_high or visual_high:
-            return "high"
-
-        # Both sensors independently flag medium → escalate to high
-        if audio_medium and visual_medium:
-            return "high"
-
-        # One sensor flags medium, other is not normal → medium
-        if audio_medium or visual_medium:
-            return "medium"
-
-        # Both detected something but neither is in defined lists
-        if not audio_normal and not visual_normal:
-            return "medium"
-
-        return "low"
