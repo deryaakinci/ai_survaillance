@@ -4,13 +4,16 @@ import torch.nn as nn
 import torch.optim as optim
 import librosa
 import numpy as np
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 from sklearn.model_selection import train_test_split
 from pathlib import Path
 import json
 
 # Import shared architecture and constants from audio_model
-from audio_model import AudioCNN, NUM_CLASSES, LABELS, LABEL_TO_IDX, IDX_TO_LABEL
+try:
+    from audio_model import AudioCNN, NUM_CLASSES, LABELS, LABEL_TO_IDX, IDX_TO_LABEL
+except ModuleNotFoundError:
+    from ai_models.audio.audio_model import AudioCNN, NUM_CLASSES, LABELS, LABEL_TO_IDX, IDX_TO_LABEL
 
 
 # ──────────────────────────────────────────────
@@ -144,9 +147,9 @@ def load_dataset(base_path="simulation/datasets/audio"):
 
 def train(
     base_path="simulation/datasets/audio",
-    epochs=30,
+    epochs=50,
     batch_size=16,
-    learning_rate=0.001,
+    learning_rate=0.0005,
     save_path="ai_models/audio/saved_model",
 ):
     device = torch.device(
@@ -187,11 +190,40 @@ def train(
     print(f"\nTrain samples : {len(train_samples)}")
     print(f"Val samples   : {len(val_samples)}")
 
+    # ── Class-weighted training to fix imbalance ──
+    train_label_indices = [s["label_idx"] for s in train_samples]
+    train_counts = np.bincount(train_label_indices, minlength=NUM_CLASSES)
+    print(f"\nClass distribution (train):")
+    for i, label in enumerate(LABELS):
+        print(f"  {label:<25} {train_counts[i]:>5} samples")
+
+    # Sqrt-inverse-frequency weights — gentler than raw inverse, avoids
+    # extreme overweighting of classes with only 2-3 samples
+    class_weights = np.zeros(NUM_CLASSES, dtype=np.float32)
+    for i in range(NUM_CLASSES):
+        if train_counts[i] > 0:
+            class_weights[i] = 1.0 / np.sqrt(train_counts[i])
+        else:
+            class_weights[i] = 0.0
+    # Normalize so weights sum to NUM_CLASSES
+    if class_weights.sum() > 0:
+        class_weights = class_weights / class_weights.sum() * NUM_CLASSES
+    class_weights_tensor = torch.tensor(class_weights).to(device)
+    print(f"\nClass weights: {dict(zip(LABELS, [f'{w:.2f}' for w in class_weights]))}")
+
+    # Per-sample weights for WeightedRandomSampler (oversample minority classes)
+    sample_weights = [1.0 / np.sqrt(max(train_counts[s["label_idx"]], 1)) for s in train_samples]
+    sampler = WeightedRandomSampler(
+        weights=sample_weights,
+        num_samples=len(train_samples),
+        replacement=True,
+    )
+
     # Augmentation enabled only for training set
     train_loader = DataLoader(
         AudioDataset(train_samples, augment=True),
         batch_size=batch_size,
-        shuffle=True,
+        sampler=sampler,  # balanced sampling instead of shuffle
     )
     val_loader = DataLoader(
         AudioDataset(val_samples, augment=False),
@@ -200,7 +232,7 @@ def train(
     )
 
     model = AudioCNN(num_classes=NUM_CLASSES).to(device)
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(weight=class_weights_tensor)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, patience=5, factor=0.5,
