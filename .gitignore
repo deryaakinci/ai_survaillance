@@ -14,12 +14,17 @@ simulation/datasets/video/
 *.zip
 
 # --- AI MODELS & WEIGHTS ---
-# These files get huge; only push them if they are <50MB
 *.pt
 *.pth
 *.h5
 *.weights
 *.onnx
+
+# YOLOv8 Training Outputs & Dataset
+runs/
+ai_models/visual/yolo_dataset/
+ai_models/visual/saved_model/*/
+ai_models/audio/saved_model/*/
 
 # --- PYTHON & BACKEND ---
 venv/

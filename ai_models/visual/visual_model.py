@@ -16,7 +16,6 @@ LABELS = [
     "robbery",
     "person_down",
     "forced_entry",
-    "suspicious_package",
 ]
 
 FINETUNED_MODEL_PATH = (

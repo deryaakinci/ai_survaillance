@@ -19,7 +19,6 @@ LABELS = [
     "robbery",
     "person_down",
     "forced_entry",
-    "suspicious_package",
 ]
 LABEL_TO_IDX = {label: idx for idx, label in enumerate(LABELS)}
 
