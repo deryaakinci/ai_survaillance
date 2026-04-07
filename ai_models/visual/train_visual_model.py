@@ -44,27 +44,52 @@ def prepare_yolo_dataset(
 
     all_frames = []
 
+    print("\nCalculating class video distribution for balanced sampling...")
+    class_videos = {}
     for label in LABELS:
         folder = os.path.join(source_path, label)
-        if not os.path.exists(folder):
-            print(f"⚠ Skipping {label} — folder not found")
-            continue
+        if os.path.exists(folder):
+            videos = []
+            for ext in ["*.mp4", "*.avi", "*.mov"]:
+                videos.extend(list(Path(folder).glob(ext)))
+            if videos:
+                class_videos[label] = videos
 
-        video_files = []
-        for ext in ["*.mp4", "*.avi", "*.mov"]:
-            video_files.extend(list(Path(folder).glob(ext)))
+    if not class_videos:
+        print("No video files found!")
+        return None
 
-        if not video_files:
+    # Calculate target frames to balance classes
+    # We aim for ~5 frames per video for the largest class, and scale up for minority classes
+    max_videos = max(len(v) for v in class_videos.values())
+    target_frames_per_class = max_videos * 5
+    
+    print(f"\nBalancing dataset: Targeting ~{target_frames_per_class} frames per class")
+    print("-" * 40)
+
+    for label in LABELS:
+        if label not in class_videos:
             print(f"⚠ Skipping {label} — no video files")
             continue
 
+        video_files = class_videos[label]
         label_idx = LABEL_TO_IDX[label]
         frame_count = 0
+        
+        # Calculate how many frames to extract per video to hit the target
+        frames_per_video = max(1, int(np.ceil(target_frames_per_class / len(video_files))))
 
         for video_path in video_files:
             cap = cv2.VideoCapture(str(video_path))
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            frame_indices = np.linspace(0, total_frames - 1, 5, dtype=int)
+            
+            if total_frames <= 0:
+                cap.release()
+                continue
+                
+            # Extract balanced number of frames (don't exceed total frames in the video)
+            num_to_extract = min(frames_per_video, total_frames)
+            frame_indices = np.linspace(0, total_frames - 1, num_to_extract, dtype=int)
 
             for idx in frame_indices:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
@@ -83,9 +108,19 @@ def prepare_yolo_dataset(
 
             cap.release()
 
-        print(f"✓ {label:<25} {frame_count} frames extracted")
+        print(f"✓ {label:<25} {frame_count} frames extracted (from {len(video_files)} videos)")
 
     print(f"\nTotal frames: {len(all_frames)}")
+    
+    # ── Class-weighted tracking to show distribution ──
+    print(f"\nClass distribution (balanced frames):")
+    label_counts = {}
+    for item in all_frames:
+        l = item['label']
+        label_counts[l] = label_counts.get(l, 0) + 1
+    for label in LABELS:
+        if label in label_counts:
+            print(f"  {label:<25} {label_counts[label]:>5} frames")
 
     if len(all_frames) == 0:
         print("No frames extracted! Add videos to dataset folders.")
@@ -170,7 +205,8 @@ def train(
         imgsz=imgsz,
         batch=batch,
         name="surveillance_model",
-        project=save_path,
+        project=os.path.abspath(save_path),
+        exist_ok=True,
         patience=10,
         save=True,
         plots=True,
