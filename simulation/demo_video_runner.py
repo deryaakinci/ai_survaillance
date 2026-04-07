@@ -125,6 +125,40 @@ def format_timestamp(seconds: float) -> str:
     return f"{m:02d}:{s:02d}"
 
 
+# ── API Integration ────────────────────────────────────────────────────────
+
+def setup_api_session(base_url="http://localhost:8000"):
+    import requests
+    try:
+        # Just check if the server is alive
+        requests.get(base_url, timeout=2)
+        return {"base_url": base_url}
+    except:
+        return None
+
+def post_event(session_info, audio_result, visual_result, fusion_result, alert_fired):
+    if not session_info:
+        return
+    import requests
+    try:
+        requests.post(
+            f"{session_info['base_url']}/events/demo_broadcast",
+            params={
+                "audio_label": audio_result["label"],
+                "visual_label": visual_result["label"],
+                "audio_confidence": audio_result["confidence"],
+                "visual_confidence": visual_result["confidence"],
+                "fusion_score": fusion_result["fused_score"],
+                "alert_fired": alert_fired,
+                "severity": fusion_result["severity"],
+                "zone": "Demo Camera"
+            },
+            timeout=2
+        )
+    except Exception:
+        pass
+
+
 # ── main analysis loop ────────────────────────────────────────────────────
 
 def run_demo(
@@ -151,6 +185,13 @@ def run_demo(
     fusion       = FusionEngine()
     alert_logic  = AlertLogic()
     print("Models ready.\n")
+
+    print("Connecting to backend API (for real-time dashboard)...")
+    session_info = setup_api_session()
+    if session_info:
+        print(_c(C.GREEN, "  ✓ API Connected. Alerts will appear in dashboard!\n"))
+    else:
+        print(_c(C.YELLOW, "  ⚠ Local backend not running. Terminal-only mode.\n"))
 
     # ── get video duration ──────────────────────────────────────────────────
     cap = cv2.VideoCapture(video_path)
@@ -262,6 +303,9 @@ def run_demo(
             fused = fusion_result["fused_score"]
             print(_c(C.DIM, f"           → fused_score={fused:.3f}  "
                 f"audio_conf={a_conf:.2f}  visual_conf={v_conf:.2f}"))
+
+        # Send to API if connected
+        post_event(session_info, audio_result, visual_result, fusion_result, alert_fired)
 
         chunk_start += chunk_sec
 

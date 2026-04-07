@@ -105,3 +105,48 @@ class FusionEngine:
             "location": pos,
             "timestamp": datetime.now().isoformat()
         }
+
+    def fuse(self, audio_result: dict, visual_result: dict) -> dict:
+        """
+        Fuses the results from the audio and visual models.
+        Matches the expected output format for demo_video_runner.py and alert_logic.py.
+        """
+        a_label = audio_result.get("label", "normal")
+        v_label = visual_result.get("label", "normal")
+        
+        a_conf = audio_result.get("confidence", 0.0)
+        v_conf = visual_result.get("confidence", 0.0)
+        
+        # Simple rule: if either is abnormal, it's an alert
+        alert = (a_label != "normal") or (v_label != "normal")
+        
+        fused_score = max(a_conf, v_conf)
+        
+        # Determine highest severity based on both labels
+        severity = "low"
+        if alert:
+            high = [
+                "weapon_detected", "person_down", "explosion", "robbery", 
+                "forced_entry", "assault", "abuse", "gunshot", "scream", 
+                "fight_sounds", "door_forced", "threatening_voice"
+            ]
+            medium = [
+                "intruder_detected", "vehicle_intrusion", "fighting", 
+                "suspicious_package", "glass_break", "break_in", 
+                "crying_distress", "car_crash"
+            ]
+            
+            if a_label in high or v_label in high:
+                severity = "high"
+            elif a_label in medium or v_label in medium:
+                severity = "medium"
+            else:
+                severity = "low"
+                
+        return {
+            "audio_label": a_label,
+            "visual_label": v_label,
+            "fused_score": fused_score,
+            "alert": alert,
+            "severity": severity
+        }

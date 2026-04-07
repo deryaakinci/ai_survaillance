@@ -134,3 +134,74 @@ def create_event(
         "fusion_score": event.fusion_score,
         "alert_fired": event.alert_fired,
     }
+
+
+@router.post("/demo_broadcast")
+async def demo_broadcast_event(
+    request: Request,
+    db: Session = Depends(get_db),
+    audio_label: str = "normal",
+    visual_label: str = "normal",
+    audio_confidence: float = 0.0,
+    visual_confidence: float = 0.0,
+    fusion_score: float = 0.0,
+    alert_fired: bool = False,
+    severity: str = "low",
+    zone: str = "Demo Camera",
+):
+    """
+    Broadcasts a simulation event to ALL users in the database automatically.
+    This allows the simulation script to trigger live alerts on any user's dashboard.
+    """
+    from backend.database.models import User, Alert
+    from backend.services.notifier import NotificationService
+    from backend.api.routes.alerts import _get_title
+    
+    users = db.query(User).all()
+    
+    for user in users:
+        # Create event for user
+        event = Event(
+            id=str(uuid.uuid4()),
+            user_id=user.id,
+            audio_label=audio_label,
+            visual_label=visual_label,
+            audio_confidence=audio_confidence,
+            visual_confidence=visual_confidence,
+            fusion_score=fusion_score,
+            alert_fired=alert_fired,
+            zone=zone,
+            timestamp=datetime.utcnow(),
+        )
+        db.add(event)
+        
+        # Create alert if fired
+        if alert_fired:
+            alert = Alert(
+                id=str(uuid.uuid4()),
+                user_id=user.id,
+                audio_label=audio_label,
+                visual_label=visual_label,
+                severity=severity,
+                zone=zone,
+                timestamp=datetime.utcnow(),
+            )
+            db.add(alert)
+            
+            # Send real-time websocket alert
+            if hasattr(request.app.state, "manager"):
+                notifier = NotificationService(request.app.state.manager)
+                await notifier.send_alert(user.id, {
+                    "id": alert.id,
+                    "audio_label": audio_label,
+                    "visual_label": visual_label,
+                    "severity": severity,
+                    "zone": zone,
+                    "timestamp": alert.timestamp.isoformat(),
+                    "title": _get_title(audio_label, severity),
+                    "body": f"{audio_label.replace('_', ' ').title()} · {visual_label.replace('_', ' ').title()} · {zone}",
+                })
+                
+    db.commit()
+    return {"status": "broadcast_successful", "users_reached": len(users)}
+
