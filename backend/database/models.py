@@ -34,6 +34,7 @@ class Alert(Base):
     zone = Column(String, default="Zone 1")
     snapshot_url = Column(String, nullable=True)
     audio_clip_url = Column(String, nullable=True)
+    video_clip_url = Column(String, nullable=True)
     timestamp = Column(DateTime, default=datetime.utcnow)
 
 
