@@ -106,47 +106,87 @@ class FusionEngine:
             "timestamp": datetime.now().isoformat()
         }
 
+    # ── Cross-modal consistency ──────────────────────────────────────────
+    # Maps each audio label → set of visual labels it naturally correlates
+    # with.  If the visual label is NOT in this set the audio prediction is
+    # considered unreliable and gets overridden.
+    AUDIO_VISUAL_COMPAT = {
+        "gunshot":           {"weapon_detected", "robbery", "assault", "fighting", "person_down"},
+        "explosion":         {"explosion", "person_down", "vehicle_intrusion"},
+        "scream":            {"assault", "abuse", "robbery", "fighting", "person_down", "intruder_detected", "forced_entry"},
+        "glass_break":       {"forced_entry", "intruder_detected", "robbery", "weapon_detected"},
+        "forced_entry":      {"forced_entry", "intruder_detected", "robbery"},
+        "crying_distress":   {"abuse", "person_down", "assault", "robbery"},
+        "fight_sounds":      {"fighting", "assault", "abuse", "person_down", "robbery"},
+        "siren":             {"vehicle_intrusion", "person_down", "explosion"},
+        "car_crash":         {"vehicle_intrusion", "explosion", "person_down"},
+        "threatening_voice": {"assault", "robbery", "abuse", "intruder_detected", "weapon_detected", "fighting"},
+    }
+
     def fuse(self, audio_result: dict, visual_result: dict) -> dict:
         """
-        Fuses the results from the audio and visual models.
-        Matches the expected output format for demo_video_runner.py and alert_logic.py.
+        Fuses audio and visual results with cross-modal consistency
+        checking.  When the two modalities disagree (e.g. audio says
+        'explosion' but visual says 'abuse') the mismatched label is
+        overridden so the final output stays consistent.
         """
         a_label = audio_result.get("label", "normal")
         v_label = visual_result.get("label", "normal")
-        
+
         a_conf = audio_result.get("confidence", 0.0)
         v_conf = visual_result.get("confidence", 0.0)
-        
-        # Simple rule: if either is abnormal, it's an alert
+
+        # ── Cross-modal consistency check ──────────────────────────────
+        # Visual is generally more reliable for scene classification,
+        # so when audio contradicts visual we correct the audio label.
+        if a_label != "normal" and v_label != "normal":
+            compatible_visuals = self.AUDIO_VISUAL_COMPAT.get(a_label)
+            if compatible_visuals and v_label not in compatible_visuals:
+                # Audio label doesn't match what the camera sees
+                # → override audio with a label consistent with the visual
+                a_label = v_label          # align to visual scene
+                a_conf  = a_conf * 0.4     # heavily penalise the audio conf
+
+        # When only one modality fires, trust it as-is (no conflict to resolve)
+
+        # ── Fused score ────────────────────────────────────────────────
+        if a_label != "normal" and v_label != "normal":
+            if a_label == v_label:
+                # Both agree → boost confidence
+                fused_score = min(1.0, max(a_conf, v_conf) * 1.05)
+            else:
+                # Both abnormal but different classes → weighted max
+                fused_score = max(a_conf, v_conf)
+        else:
+            fused_score = max(a_conf, v_conf)
+
         alert = (a_label != "normal") or (v_label != "normal")
-        
-        fused_score = max(a_conf, v_conf)
-        
-        # Determine highest severity based on both labels
+
+        # ── Severity ──────────────────────────────────────────────────
         severity = "low"
         if alert:
             high = [
-                "weapon_detected", "person_down", "explosion", "robbery", 
-                "forced_entry", "assault", "abuse", "gunshot", "scream", 
-                "fight_sounds", "door_forced", "threatening_voice"
+                "weapon_detected", "person_down", "explosion", "robbery",
+                "forced_entry", "assault", "abuse", "gunshot", "scream",
+                "fight_sounds", "threatening_voice",
             ]
             medium = [
-                "intruder_detected", "vehicle_intrusion", "fighting", 
-                "suspicious_package", "glass_break", "break_in", 
-                "crying_distress", "car_crash"
+                "intruder_detected", "vehicle_intrusion", "fighting",
+                "suspicious_package", "glass_break",
+                "crying_distress", "car_crash",
             ]
-            
+
             if a_label in high or v_label in high:
                 severity = "high"
             elif a_label in medium or v_label in medium:
                 severity = "medium"
             else:
                 severity = "low"
-                
+
         return {
             "audio_label": a_label,
             "visual_label": v_label,
-            "fused_score": fused_score,
+            "fused_score": round(fused_score, 3),
             "alert": alert,
-            "severity": severity
+            "severity": severity,
         }

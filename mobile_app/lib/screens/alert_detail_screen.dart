@@ -97,7 +97,8 @@ class AlertDetailScreen extends StatelessWidget {
                 child: Column(
                   children: [
                     Container(
-                      height: 110,
+                      height: 180,
+                      width: double.infinity,
                       decoration: BoxDecoration(
                         color: _severityColor.withOpacity(0.08),
                         borderRadius: const BorderRadius.vertical(
@@ -110,25 +111,28 @@ class AlertDetailScreen extends StatelessWidget {
                           ),
                         ),
                       ),
-                      child: Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.image_outlined,
-                              color: _severityColor,
-                              size: 32,
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              'Snapshot captured',
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: _severityColor,
-                              ),
-                            ),
-                          ],
+                      child: ClipRRect(
+                        borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(16),
                         ),
+                        child: alert.snapshotUrl != null
+                            ? Image.network(
+                                'http://127.0.0.1:8000${alert.snapshotUrl}',
+                                fit: BoxFit.cover,
+                                width: double.infinity,
+                                height: 180,
+                                errorBuilder: (_, __, ___) => _snapshotPlaceholder(),
+                                loadingBuilder: (_, child, progress) {
+                                  if (progress == null) return child;
+                                  return Center(
+                                    child: CircularProgressIndicator(
+                                      color: _severityColor,
+                                      strokeWidth: 2,
+                                    ),
+                                  );
+                                },
+                              )
+                            : _snapshotPlaceholder(),
                       ),
                     ),
                     Padding(
@@ -207,6 +211,29 @@ class AlertDetailScreen extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _snapshotPlaceholder() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.image_outlined,
+            color: _severityColor,
+            size: 32,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'No snapshot available',
+            style: TextStyle(
+              fontSize: 10,
+              color: _severityColor,
+            ),
+          ),
+        ],
       ),
     );
   }

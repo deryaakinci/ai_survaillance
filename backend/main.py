@@ -1,10 +1,12 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from backend.api.routes import events, alerts, stats, auth
 from backend.database.db import init_db
 from typing import Dict, List
 import json
+import os
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -98,5 +100,10 @@ app.include_router(events.router, prefix="/events", tags=["events"])
 app.include_router(alerts.router, prefix="/alerts", tags=["alerts"])
 app.include_router(stats.router, prefix="/stats", tags=["stats"])
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
+
+# ── Serve snapshot images ──────────────────────────────────────────────────
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+os.makedirs(os.path.join(static_dir, "snapshots"), exist_ok=True)
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 app.state.manager = manager

@@ -4,8 +4,6 @@ from simulation.scenarios import (
     explosion,
     scream,
     glass_break,
-    break_in,
-    door_forced,
     crying_distress,
     fight_sounds,
     siren,

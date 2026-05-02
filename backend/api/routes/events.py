@@ -88,6 +88,7 @@ def list_events(
             "visual_confidence": e.visual_confidence,
             "fusion_score": e.fusion_score,
             "alert_fired": e.alert_fired,
+            "severity": e.severity or "low",
             "zone": e.zone,
             "timestamp": e.timestamp.isoformat() if e.timestamp else None,
         }
@@ -136,6 +137,20 @@ def create_event(
     }
 
 
+# ── Deduplication tracker for demo broadcasts ─────────────────────────────
+# Tracks which (audio_label) values have already triggered an alert
+# for each user during the current simulation run.
+# Key = user_id, Value = set of audio_label strings already alerted.
+_broadcast_seen: dict[str, set[str]] = {}
+
+
+@router.post("/demo_broadcast/reset")
+def reset_broadcast_session():
+    """Clear deduplication state — call before starting a new demo run."""
+    _broadcast_seen.clear()
+    return {"status": "reset_successful"}
+
+
 @router.post("/demo_broadcast")
 async def demo_broadcast_event(
     request: Request,
@@ -148,19 +163,27 @@ async def demo_broadcast_event(
     alert_fired: bool = False,
     severity: str = "low",
     zone: str = "Demo Camera",
+    snapshot_filename: str = "",
 ):
     """
     Broadcasts a simulation event to ALL users in the database automatically.
-    This allows the simulation script to trigger live alerts on any user's dashboard.
+    Events are ALWAYS saved (for history & analytics).
+    Alerts and notifications are only created for the FIRST occurrence
+    of each unique threat type (audio_label) per simulation run.
     """
     from backend.database.models import User, Alert
     from backend.services.notifier import NotificationService
     from backend.api.routes.alerts import _get_title
-    
+
+    # Build snapshot URL if a filename was provided
+    snapshot_url = None
+    if snapshot_filename:
+        snapshot_url = f"/static/snapshots/{snapshot_filename}"
+
     users = db.query(User).all()
-    
+
     for user in users:
-        # Create event for user
+        # ── Always save every event (history + analytics) ──────────────
         event = Event(
             id=str(uuid.uuid4()),
             user_id=user.id,
@@ -170,38 +193,48 @@ async def demo_broadcast_event(
             visual_confidence=visual_confidence,
             fusion_score=fusion_score,
             alert_fired=alert_fired,
+            severity=severity,
             zone=zone,
             timestamp=datetime.utcnow(),
         )
         db.add(event)
-        
-        # Create alert if fired
+
+        # ── Deduplicated alert + notification ──────────────────────────
         if alert_fired:
-            alert = Alert(
-                id=str(uuid.uuid4()),
-                user_id=user.id,
-                audio_label=audio_label,
-                visual_label=visual_label,
-                severity=severity,
-                zone=zone,
-                timestamp=datetime.utcnow(),
-            )
-            db.add(alert)
-            
-            # Send real-time websocket alert
-            if hasattr(request.app.state, "manager"):
-                notifier = NotificationService(request.app.state.manager)
-                await notifier.send_alert(user.id, {
-                    "id": alert.id,
-                    "audio_label": audio_label,
-                    "visual_label": visual_label,
-                    "severity": severity,
-                    "zone": zone,
-                    "timestamp": alert.timestamp.isoformat(),
-                    "title": _get_title(audio_label, severity),
-                    "body": f"{audio_label.replace('_', ' ').title()} · {visual_label.replace('_', ' ').title()} · {zone}",
-                })
-                
+            seen = _broadcast_seen.setdefault(user.id, set())
+            dedup_key = audio_label  # one alert per unique threat name
+
+            if dedup_key not in seen:
+                seen.add(dedup_key)
+
+                alert = Alert(
+                    id=str(uuid.uuid4()),
+                    user_id=user.id,
+                    audio_label=audio_label,
+                    visual_label=visual_label,
+                    severity=severity,
+                    zone=zone,
+                    snapshot_url=snapshot_url,
+                    timestamp=datetime.utcnow(),
+                )
+                db.add(alert)
+
+                # Send real-time websocket alert (first occurrence only)
+                if hasattr(request.app.state, "manager"):
+                    notifier = NotificationService(request.app.state.manager)
+                    await notifier.send_alert(user.id, {
+                        "id": alert.id,
+                        "audio_label": audio_label,
+                        "visual_label": visual_label,
+                        "severity": severity,
+                        "zone": zone,
+                        "snapshot_url": snapshot_url,
+                        "timestamp": alert.timestamp.isoformat(),
+                        "title": _get_title(audio_label, severity),
+                        "body": f"{audio_label.replace('_', ' ').title()} · {visual_label.replace('_', ' ').title()} · {zone}",
+                    })
+
     db.commit()
     return {"status": "broadcast_successful", "users_reached": len(users)}
+
 

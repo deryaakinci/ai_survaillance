@@ -16,7 +16,7 @@ class HistoryScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Padding(
-              padding: EdgeInsets.fromLTRB(16, 12, 16, 12),
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
               child: Text(
                 'History',
                 style: TextStyle(
@@ -24,6 +24,20 @@ class HistoryScreen extends StatelessWidget {
                   fontWeight: FontWeight.w600,
                   color: Colors.white,
                 ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Consumer<AlertProvider>(
+                builder: (context, provider, _) {
+                  return Text(
+                    '${provider.alerts.length} alert instances',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF555555),
+                    ),
+                  );
+                },
               ),
             ),
             Expanded(
@@ -37,6 +51,7 @@ class HistoryScreen extends StatelessWidget {
                       ),
                     );
                   }
+                  // Show ALL instances — no deduplication in history
                   return ListView.builder(
                     itemCount: provider.alerts.length,
                     itemBuilder: (ctx, i) => AlertCard(

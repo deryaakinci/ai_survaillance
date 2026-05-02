@@ -132,14 +132,27 @@ def setup_api_session(base_url="http://localhost:8000"):
     try:
         # Just check if the server is alive
         requests.get(base_url, timeout=2)
+        # Reset deduplication state for fresh demo run
+        requests.post(f"{base_url}/events/demo_broadcast/reset", timeout=2)
         return {"base_url": base_url}
     except:
         return None
 
-def post_event(session_info, audio_result, visual_result, fusion_result, alert_fired):
+def post_event(session_info, audio_result, visual_result, fusion_result, alert_fired, frame=None):
     if not session_info:
         return
     import requests
+
+    snapshot_filename = ""
+
+    # Save frame snapshot when an alert fires
+    if alert_fired and frame is not None:
+        snapshot_dir = os.path.join(ROOT, "backend", "static", "snapshots")
+        os.makedirs(snapshot_dir, exist_ok=True)
+        snapshot_filename = f"snap_{int(time.time() * 1000)}.jpg"
+        snapshot_path = os.path.join(snapshot_dir, snapshot_filename)
+        cv2.imwrite(snapshot_path, frame)
+
     try:
         requests.post(
             f"{session_info['base_url']}/events/demo_broadcast",
@@ -151,7 +164,8 @@ def post_event(session_info, audio_result, visual_result, fusion_result, alert_f
                 "fusion_score": fusion_result["fused_score"],
                 "alert_fired": alert_fired,
                 "severity": fusion_result["severity"],
-                "zone": "Demo Camera"
+                "zone": "Demo Camera",
+                "snapshot_filename": snapshot_filename,
             },
             timeout=2
         )
@@ -273,10 +287,10 @@ def run_demo(
         severity      = fusion_result["severity"]
         sc            = severity_color(severity)
 
-        # ── build output line ──────────────────────────────────────────────
+        # ── build output line (use fused/corrected labels) ─────────────────
         ts       = format_timestamp(chunk_start)
-        a_label  = audio_result["label"]
-        v_label  = visual_result["label"]
+        a_label  = fusion_result["audio_label"]
+        v_label  = fusion_result["visual_label"]
         a_conf   = audio_result["confidence"]
         v_conf   = visual_result["confidence"]
 
@@ -304,8 +318,8 @@ def run_demo(
             print(_c(C.DIM, f"           → fused_score={fused:.3f}  "
                 f"audio_conf={a_conf:.2f}  visual_conf={v_conf:.2f}"))
 
-        # Send to API if connected
-        post_event(session_info, audio_result, visual_result, fusion_result, alert_fired)
+        # Send to API if connected (pass frame for snapshot capture)
+        post_event(session_info, audio_result, visual_result, fusion_result, alert_fired, frame)
 
         chunk_start += chunk_sec
 

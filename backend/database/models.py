@@ -18,6 +18,7 @@ class Event(Base):
     visual_confidence = Column(Float, default=0.0)
     fusion_score = Column(Float)
     alert_fired = Column(Boolean, default=False)
+    severity = Column(String, default="low")
     zone = Column(String, default="Zone 1")
     total_events_in_chunk = Column(Integer, default=1)
 

@@ -101,8 +101,8 @@ def get_stats_overview(
 
     # ── Alert type breakdown (by audio_label) ─────────────────────────
     type_keys = [
-        "gunshot", "explosion", "scream", "break_in",
-        "glass_break", "fight", "door_forced", "weapon",
+        "gunshot", "explosion", "scream", "forced_entry",
+        "glass_break", "fight", "weapon",
         "crying_distress", "siren", "car_crash", "threatening_voice",
     ]
 

@@ -17,6 +17,10 @@ class WebSocketService extends ChangeNotifier {
   final SecureStorageService _storage = SecureStorageService();
   final List<VoidCallback> _onAlertCallbacks = [];
 
+  // ── Notification deduplication ──────────────────────────────────────
+  // Only show one local notification per unique audio_label per session.
+  final Set<String> _notifiedLabels = {};
+
   void addAlertListener(VoidCallback callback) {
     _onAlertCallbacks.add(callback);
   }
@@ -25,9 +29,15 @@ class WebSocketService extends ChangeNotifier {
     _onAlertCallbacks.remove(callback);
   }
 
+  /// Reset deduplication state (e.g., on new demo run or manual refresh).
+  void resetDeduplication() {
+    _notifiedLabels.clear();
+  }
+
   Future<void> connect() async {
     await _notificationService.initialize();
     await _notificationService.requestPermissions();
+    _notifiedLabels.clear();
     _connect();
   }
 
@@ -87,13 +97,19 @@ class WebSocketService extends ChangeNotifier {
           visualLabel: alertData['visual_label'] ?? '',
           zone: alertData['zone'] ?? 'Zone 1',
           severity: alertData['severity'] ?? 'low',
+          snapshotUrl: alertData['snapshot_url'],
           timestamp: DateTime.tryParse(
                 alertData['timestamp'] ?? '',
               ) ??
               DateTime.now(),
         );
 
-        _notificationService.showAlertNotification(latestAlert!);
+        // Only show notification for first occurrence of each threat type
+        final label = latestAlert!.audioLabel;
+        if (!_notifiedLabels.contains(label)) {
+          _notifiedLabels.add(label);
+          _notificationService.showAlertNotification(latestAlert!);
+        }
 
         for (final callback in _onAlertCallbacks) {
           callback();

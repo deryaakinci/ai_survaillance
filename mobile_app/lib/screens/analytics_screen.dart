@@ -160,10 +160,9 @@ class AnalyticsScreen extends StatelessWidget {
       {'label': 'Gunshot', 'color': const Color(0xFF7F77DD), 'key': 'gunshot'},
       {'label': 'Explosion', 'color': const Color(0xFFE24B4A), 'key': 'explosion'},
       {'label': 'Scream', 'color': const Color(0xFFEF9F27), 'key': 'scream'},
-      {'label': 'Break in', 'color': const Color(0xFF1D9E75), 'key': 'break_in'},
+      {'label': 'Forced entry', 'color': const Color(0xFF1D9E75), 'key': 'forced_entry'},
       {'label': 'Glass break', 'color': const Color(0xFF85B7EB), 'key': 'glass_break'},
       {'label': 'Fight', 'color': const Color(0xFFD85A30), 'key': 'fight'},
-      {'label': 'Door forced', 'color': const Color(0xFFD4537E), 'key': 'door_forced'},
       {'label': 'Weapon', 'color': const Color(0xFF5DCAA5), 'key': 'weapon'},
     ];
     final total = provider.totalAlerts;

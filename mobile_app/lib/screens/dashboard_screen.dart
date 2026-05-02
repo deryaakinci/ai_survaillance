@@ -17,7 +17,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
-    Future.microtask(() => context.read<AlertProvider>().loadAlerts());
+    Future.microtask(() {
+      final provider = context.read<AlertProvider>();
+      provider.loadAlerts();
+      provider.loadAnalytics();
+    });
   }
 
   @override
@@ -28,7 +32,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         child: Consumer<AlertProvider>(
           builder: (context, provider, _) {
             return RefreshIndicator(
-              onRefresh: provider.loadAlerts,
+              onRefresh: provider.refreshNow,
               color: const Color(0xFF7F77DD),
               child: SingleChildScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
@@ -90,6 +94,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         ],
                       ),
                     ),
+                    // ── Stat cards — uses backend data ──────────────────
                     Padding(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 16,
@@ -97,20 +102,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       child: Row(
                         children: [
                           StatCard(
-                            number: provider.todayAlerts.length.toString(),
+                            number: provider.alertsToday.toString(),
                             label: 'Alerts today',
                             dotColor: const Color(0xFFE24B4A),
                           ),
                           const SizedBox(width: 8),
                           StatCard(
-                            number: provider.alerts.length.toString(),
+                            number: provider.totalAlerts.toString(),
                             label: 'This week',
                             dotColor: const Color(0xFFEF9F27),
                           ),
                           const SizedBox(width: 8),
                           StatCard(
-                            number: (provider.alerts.length * 3).toString(),
-                            label: 'This month',
+                            number: provider.totalEvents.toString(),
+                            label: 'Total events',
                             dotColor: const Color(0xFF1D9E75),
                           ),
                         ],
@@ -173,6 +178,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _alertTypesChart(AlertProvider provider) {
+    // ── Dynamic chart from backend alertTypes data ──────────────────
+    final chartColors = [
+      const Color(0xFF7F77DD),
+      const Color(0xFFE24B4A),
+      const Color(0xFFEF9F27),
+      const Color(0xFF1D9E75),
+      const Color(0xFF85B7EB),
+      const Color(0xFFD85A30),
+      const Color(0xFF5DCAA5),
+    ];
+
+    // Get entries with non-zero counts, sorted by count descending
+    final entries = provider.alertTypes.entries
+        .where((e) => e.value > 0)
+        .toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    // Take top entries that fit the chart
+    final topEntries = entries.take(chartColors.length).toList();
+    final maxCount = topEntries.isNotEmpty
+        ? topEntries.first.value
+        : 1;
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       padding: const EdgeInsets.all(16),
@@ -185,16 +213,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
         children: [
           const Text('Alert types this week', style: TextStyle(color: Color(0xFF555555), fontSize: 13, fontWeight: FontWeight.w500)),
           const SizedBox(height: 20),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _chartBar('Gunshot', 65, const Color(0xFF7F77DD)),
-              _chartBar('Intruder', 45, const Color(0xFFEF9F27)),
-              _chartBar('Glass', 30, const Color(0xFF1D9E75)),
-              _chartBar('Scream', 20, const Color(0xFFE24B4A)),
-            ],
-          ),
+          if (topEntries.isEmpty)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 20),
+                child: Text(
+                  'No alert data yet',
+                  style: TextStyle(color: Color(0xFF444444), fontSize: 12),
+                ),
+              ),
+            )
+          else
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: topEntries.asMap().entries.map((entry) {
+                final i = entry.key;
+                final e = entry.value;
+                final barHeight = (e.value / maxCount * 80).clamp(8.0, 80.0);
+                final label = e.key.replaceAll('_', ' ');
+                final displayLabel = label.length > 8
+                    ? '${label.substring(0, 7)}…'
+                    : label;
+                return _chartBar(
+                  displayLabel,
+                  barHeight,
+                  chartColors[i % chartColors.length],
+                );
+              }).toList(),
+            ),
         ],
       ),
     );

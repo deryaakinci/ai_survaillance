@@ -12,8 +12,7 @@ LABELS = [
     "explosion",
     "scream",
     "glass_break",
-    "break_in",
-    "door_forced",
+    "forced_entry",
     "crying_distress",
     "fight_sounds",
     "siren",
@@ -149,10 +148,10 @@ class AudioAnomalyDetector:
     def get_severity(self, label: str) -> str:
         high = [
             "gunshot", "explosion", "scream",
-            "fight_sounds", "door_forced", "threatening_voice",
+            "fight_sounds", "forced_entry", "threatening_voice",
         ]
         medium = [
-            "glass_break", "break_in", "crying_distress",
+            "glass_break", "crying_distress",
             "car_crash",
         ]
         low = ["siren"]

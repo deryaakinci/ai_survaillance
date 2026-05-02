@@ -41,8 +41,15 @@ class VisualAnomalyDetector:
                 "using base yolov8n.pt. Run train_visual_model.py first."
             )
 
+    # High-severity labels that should take priority even at lower confidence
+    HIGH_PRIORITY_LABELS = {
+        "weapon_detected", "explosion", "person_down",
+        "forced_entry", "assault", "robbery", "abuse",
+    }
+
     def predict(self, frame) -> dict:
-        results = self.model(frame, verbose=False)
+        # Lower conf threshold + larger image size to catch small objects like guns
+        results = self.model(frame, verbose=False, conf=0.10, imgsz=1280)
 
         if self.is_finetuned:
             return self._predict_finetuned(results)
@@ -52,11 +59,13 @@ class VisualAnomalyDetector:
     def _predict_finetuned(self, results) -> dict:
         """
         Fine-tuned model outputs our custom surveillance labels directly.
-        Pick the detection with the highest confidence.
+        Uses severity-based priority: high-severity labels (e.g. weapon_detected)
+        take precedence even if they have lower confidence than generic detections.
         """
-        best_label = "normal"
-        best_confidence = 0.0  # separate tracking threshold
-        best_score = 0.0
+        high_prio_label = None
+        high_prio_score = 0.0
+        other_label = None
+        other_score = 0.0
 
         for result in results:
             for box in result.boxes:
@@ -67,16 +76,31 @@ class VisualAnomalyDetector:
                     if cls_id < len(LABELS)
                     else "normal"
                 )
-                if label != "normal" and confidence > best_score:
-                    best_label = label
-                    best_score = confidence
+                if label == "normal":
+                    continue
 
-        best_confidence = best_score if best_label != "normal" else 0.95
+                if label in self.HIGH_PRIORITY_LABELS:
+                    if confidence > high_prio_score:
+                        high_prio_label = label
+                        high_prio_score = confidence
+                else:
+                    if confidence > other_score:
+                        other_label = label
+                        other_score = confidence
 
-        return {
-            "label": best_label,
-            "confidence": round(best_confidence, 3),
-        }
+        # Prefer high-priority detections (even at lower confidence)
+        if high_prio_label is not None:
+            return {
+                "label": high_prio_label,
+                "confidence": round(high_prio_score, 3),
+            }
+        if other_label is not None:
+            return {
+                "label": other_label,
+                "confidence": round(other_score, 3),
+            }
+
+        return {"label": "normal", "confidence": 0.95}
 
     def _predict_base(self, frame, results) -> dict:
         """
