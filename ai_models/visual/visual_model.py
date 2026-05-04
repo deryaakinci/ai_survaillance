@@ -55,9 +55,13 @@ def _build_classifier(num_classes: int):
 
 
 class VisualAnomalyDetector:
+    # COCO labels that indicate a weapon is visible
+    WEAPON_COCO_LABELS = {"knife", "gun", "scissors", "baseball bat"}
+
     def __init__(self):
         self.is_classifier = False
         self.is_finetuned = False
+        self.yolo_detector = None  # secondary object detector
         self.device = torch.device(
             "mps" if torch.backends.mps.is_available()
             else "cuda" if torch.cuda.is_available()
@@ -75,6 +79,18 @@ class VisualAnomalyDetector:
                 f"[VisualAnomalyDetector] ResNet18 classifier loaded from "
                 f"{CLASSIFIER_MODEL_PATH}"
             )
+
+            # Load YOLO base model as a secondary weapon/object detector
+            try:
+                from ultralytics import YOLO
+                if os.path.exists(FALLBACK_MODEL_PATH):
+                    self.yolo_detector = YOLO(FALLBACK_MODEL_PATH)
+                    print(
+                        "[VisualAnomalyDetector] YOLO object detector loaded "
+                        "as secondary weapon scanner"
+                    )
+            except ImportError:
+                pass
         else:
             # Fallback: try YOLO (fine-tuned or base)
             try:
@@ -122,11 +138,44 @@ class VisualAnomalyDetector:
         else:
             return {"label": "normal", "confidence": 0.0}
 
+    def _detect_weapon_yolo(self, frame) -> dict | None:
+        """
+        Run YOLO base model to check for weapon objects (knife, gun, etc.).
+        Returns a weapon result dict if found, or None.
+        """
+        if self.yolo_detector is None:
+            return None
+
+        results = self.yolo_detector(frame, verbose=False, conf=0.25, imgsz=640)
+        best_weapon_conf = 0.0
+
+        for result in results:
+            for box in result.boxes:
+                cls_id = int(box.cls[0])
+                label = self.yolo_detector.names.get(cls_id, "")
+                conf = float(box.conf[0])
+                if label in self.WEAPON_COCO_LABELS and conf > best_weapon_conf:
+                    best_weapon_conf = conf
+
+        if best_weapon_conf > 0.25:
+            return {
+                "label": "weapon_detected",
+                "confidence": round(min(best_weapon_conf * 1.1, 0.99), 3),
+            }
+        return None
+
     def _predict_classifier(self, frame) -> dict:
         """
         ResNet18 classifier: takes a full frame, returns scene-level label.
-        Uses softmax + confidence thresholding.
+        Also runs YOLO as a secondary weapon scanner — if YOLO detects a
+        weapon object (gun, knife), it overrides the scene classification.
         """
+        # ── Secondary check: YOLO weapon scan ──────────────────────────
+        weapon_hit = self._detect_weapon_yolo(frame)
+        if weapon_hit is not None:
+            return weapon_hit
+
+        # ── Primary: ResNet18 scene classification ─────────────────────
         # Convert BGR (OpenCV) → RGB → PIL → tensor
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         img = Image.fromarray(frame_rgb)
