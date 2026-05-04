@@ -109,7 +109,7 @@ class ApiService {
   Future<List<AlertModel>> getAlerts({int days = 7}) async {
     try {
       final response = await _dio.get(
-        '/alerts',
+        '/alerts/',
         queryParameters: {'days': days},
       );
       return (response.data as List)
@@ -123,7 +123,7 @@ class ApiService {
   Future<Map<String, dynamic>> getStats({int days = 7}) async {
     try {
       final response = await _dio.get(
-        '/stats',
+        '/stats/',
         queryParameters: {'days': days},
       );
       final data = Map<String, dynamic>.from(response.data);

@@ -137,47 +137,6 @@ async def create_alert(
     return alert
 
 
-@router.get("/stats")
-def get_stats(
-    days: int = 7,
-    request: Request = None,
-    db: Session = Depends(get_db),
-):
-    user_id = get_current_user_id(request)
-    since = datetime.utcnow() - timedelta(days=days)
-
-    total = db.query(Alert).filter(
-        Alert.user_id == user_id,
-        Alert.timestamp >= since,
-    ).count()
-
-    high = db.query(Alert).filter(
-        Alert.user_id == user_id,
-        Alert.timestamp >= since,
-        Alert.severity == "high",
-    ).count()
-
-    medium = db.query(Alert).filter(
-        Alert.user_id == user_id,
-        Alert.timestamp >= since,
-        Alert.severity == "medium",
-    ).count()
-
-    low = db.query(Alert).filter(
-        Alert.user_id == user_id,
-        Alert.timestamp >= since,
-        Alert.severity == "low",
-    ).count()
-
-    return {
-        "total": total,
-        "high": high,
-        "medium": medium,
-        "low": low,
-        "days": days,
-        "accuracy": 98,
-    }
-
 
 def _get_title(audio_label: str, severity: str) -> str:
     titles = {
