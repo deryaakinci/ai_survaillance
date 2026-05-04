@@ -1,6 +1,9 @@
 import cv2
 import numpy as np
-from ultralytics import YOLO
+import torch
+import torch.nn as nn
+from torchvision import models, transforms
+from PIL import Image
 import os
 
 
@@ -18,28 +21,87 @@ LABELS = [
     "forced_entry",
 ]
 
-FINETUNED_MODEL_PATH = (
-    "ai_models/visual/saved_model/surveillance_model/weights/best.pt"
-)
+CLASSIFIER_MODEL_PATH = "ai_models/visual/saved_model/best_classifier.pth"
 FALLBACK_MODEL_PATH = "yolov8n.pt"
+
+# Minimum confidence to report an anomaly — below this we say "normal"
+MIN_CONFIDENCE = 0.30
+
+
+# ── ImageNet normalisation (must match training) ──────────────────────
+IMAGENET_MEAN = [0.485, 0.456, 0.406]
+IMAGENET_STD  = [0.229, 0.224, 0.225]
+
+_inference_transform = transforms.Compose([
+    transforms.Resize((256, 256)),
+    transforms.CenterCrop(224),
+    transforms.ToTensor(),
+    transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
+])
+
+
+def _build_classifier(num_classes: int):
+    """Rebuild the same architecture used during training."""
+    model = models.resnet18(weights=None)
+    in_features = model.fc.in_features
+    model.fc = nn.Sequential(
+        nn.Dropout(0.4),
+        nn.Linear(in_features, 256),
+        nn.ReLU(),
+        nn.Dropout(0.3),
+        nn.Linear(256, num_classes),
+    )
+    return model
 
 
 class VisualAnomalyDetector:
     def __init__(self):
+        self.is_classifier = False
         self.is_finetuned = False
+        self.device = torch.device(
+            "mps" if torch.backends.mps.is_available()
+            else "cuda" if torch.cuda.is_available()
+            else "cpu"
+        )
 
-        if os.path.exists(FINETUNED_MODEL_PATH):
-            self.model = YOLO(FINETUNED_MODEL_PATH)
-            self.is_finetuned = True
+        if os.path.exists(CLASSIFIER_MODEL_PATH):
+            self.model = _build_classifier(len(LABELS)).to(self.device)
+            self.model.load_state_dict(
+                torch.load(CLASSIFIER_MODEL_PATH, map_location=self.device)
+            )
+            self.model.eval()
+            self.is_classifier = True
             print(
-                f"[VisualAnomalyDetector] Fine-tuned model loaded from {FINETUNED_MODEL_PATH}"
+                f"[VisualAnomalyDetector] ResNet18 classifier loaded from "
+                f"{CLASSIFIER_MODEL_PATH}"
             )
         else:
-            self.model = YOLO(FALLBACK_MODEL_PATH)
-            print(
-                "[VisualAnomalyDetector] Fine-tuned model not found — "
-                "using base yolov8n.pt. Run train_visual_model.py first."
-            )
+            # Fallback: try YOLO (fine-tuned or base)
+            try:
+                from ultralytics import YOLO
+
+                FINETUNED_MODEL_PATH = (
+                    "ai_models/visual/saved_model/surveillance_model/weights/best.pt"
+                )
+                if os.path.exists(FINETUNED_MODEL_PATH):
+                    self.model = YOLO(FINETUNED_MODEL_PATH)
+                    self.is_finetuned = True
+                    print(
+                        f"[VisualAnomalyDetector] YOLO fine-tuned model loaded "
+                        f"from {FINETUNED_MODEL_PATH}"
+                    )
+                else:
+                    self.model = YOLO(FALLBACK_MODEL_PATH)
+                    print(
+                        "[VisualAnomalyDetector] No classifier or fine-tuned model "
+                        "found — using base yolov8n.pt. Run train_visual_classifier.py first."
+                    )
+            except ImportError:
+                self.model = None
+                print(
+                    "[VisualAnomalyDetector] No model available. "
+                    "Run train_visual_classifier.py first."
+                )
 
     # High-severity labels that should take priority even at lower confidence
     HIGH_PRIORITY_LABELS = {
@@ -48,17 +110,62 @@ class VisualAnomalyDetector:
     }
 
     def predict(self, frame) -> dict:
-        # Lower conf threshold + larger image size to catch small objects like guns
-        results = self.model(frame, verbose=False, conf=0.10, imgsz=1280)
-
-        if self.is_finetuned:
+        if self.is_classifier:
+            return self._predict_classifier(frame)
+        elif self.is_finetuned:
+            from ultralytics import YOLO
+            results = self.model(frame, verbose=False, conf=0.10, imgsz=1280)
             return self._predict_finetuned(results)
-        else:
+        elif self.model is not None:
+            results = self.model(frame, verbose=False, conf=0.10, imgsz=1280)
             return self._predict_base(frame, results)
+        else:
+            return {"label": "normal", "confidence": 0.0}
+
+    def _predict_classifier(self, frame) -> dict:
+        """
+        ResNet18 classifier: takes a full frame, returns scene-level label.
+        Uses softmax + confidence thresholding.
+        """
+        # Convert BGR (OpenCV) → RGB → PIL → tensor
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        img = Image.fromarray(frame_rgb)
+        tensor = _inference_transform(img).unsqueeze(0).to(self.device)
+
+        with torch.no_grad():
+            output = self.model(tensor)
+            probs = torch.softmax(output, dim=1)
+
+        # Get top-2 predictions for smarter decision-making
+        top2_probs, top2_idx = probs.topk(2, dim=1)
+        top1_conf = float(top2_probs[0][0])
+        top1_label = LABELS[int(top2_idx[0][0])]
+        top2_conf = float(top2_probs[0][1])
+        top2_label = LABELS[int(top2_idx[0][1])]
+
+        # If top prediction is "normal", check if the 2nd prediction
+        # is an anomaly with decent confidence — might be borderline
+        if top1_label == "normal":
+            if top2_label != "normal" and top2_conf > 0.20:
+                # Borderline case: report the anomaly with reduced confidence
+                return {
+                    "label": top2_label,
+                    "confidence": round(top2_conf * 0.9, 3),
+                }
+            return {"label": "normal", "confidence": round(top1_conf, 3)}
+
+        # If anomaly confidence is below threshold, report normal
+        if top1_conf < MIN_CONFIDENCE:
+            return {"label": "normal", "confidence": round(1.0 - top1_conf, 3)}
+
+        return {
+            "label": top1_label,
+            "confidence": round(top1_conf, 3),
+        }
 
     def _predict_finetuned(self, results) -> dict:
         """
-        Fine-tuned model outputs our custom surveillance labels directly.
+        Fine-tuned YOLO model outputs our custom surveillance labels directly.
         Uses severity-based priority: high-severity labels (e.g. weapon_detected)
         take precedence even if they have lower confidence than generic detections.
         """

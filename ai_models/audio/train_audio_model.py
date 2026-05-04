@@ -42,27 +42,39 @@ def extract_features(audio: np.ndarray, sr: int) -> np.ndarray:
 #  Augmentation
 # ──────────────────────────────────────────────
 
-def augment_audio(audio: np.ndarray, sr: int) -> np.ndarray:
-    """Apply random augmentations to an audio clip."""
+def augment_audio(audio: np.ndarray, sr: int, heavy: bool = False) -> np.ndarray:
+    """Apply random augmentations to an audio clip.
+    
+    When `heavy=True` (minority classes), apply more aggressive augmentation
+    to generate more diverse training examples from limited data.
+    """
 
-    # Time shift — roll audio forward/backward by up to 10%
-    shift = int(np.random.uniform(-0.1, 0.1) * len(audio))
+    # Time shift — roll audio forward/backward by up to 10% (20% for heavy)
+    max_shift = 0.20 if heavy else 0.10
+    shift = int(np.random.uniform(-max_shift, max_shift) * len(audio))
     audio = np.roll(audio, shift)
 
-    # Add Gaussian noise
-    if np.random.rand() < 0.5:
-        noise_level = np.random.uniform(0.001, 0.005)
+    # Add Gaussian noise (always for heavy, 50% for normal)
+    if heavy or np.random.rand() < 0.5:
+        noise_level = np.random.uniform(0.002, 0.010) if heavy else np.random.uniform(0.001, 0.005)
         audio = audio + noise_level * np.random.randn(len(audio))
 
-    # Pitch shift by -2 to +2 semitones
-    if np.random.rand() < 0.5:
-        steps = np.random.uniform(-2, 2)
+    # Pitch shift by -2 to +2 semitones (-4 to +4 for heavy)
+    if heavy or np.random.rand() < 0.5:
+        max_steps = 4 if heavy else 2
+        steps = np.random.uniform(-max_steps, max_steps)
         audio = librosa.effects.pitch_shift(audio, sr=sr, n_steps=steps)
 
-    # Time stretch by 0.9x–1.1x
-    if np.random.rand() < 0.5:
-        rate = np.random.uniform(0.9, 1.1)
+    # Time stretch by 0.8x–1.2x for heavy, 0.9x–1.1x for normal
+    if heavy or np.random.rand() < 0.5:
+        lo, hi = (0.8, 1.2) if heavy else (0.9, 1.1)
+        rate = np.random.uniform(lo, hi)
         audio = librosa.effects.time_stretch(audio, rate=rate)
+
+    # Volume scaling (heavy augmentation only)
+    if heavy and np.random.rand() < 0.7:
+        gain = np.random.uniform(0.6, 1.5)
+        audio = audio * gain
 
     return audio.astype(np.float32)
 
@@ -72,9 +84,21 @@ def augment_audio(audio: np.ndarray, sr: int) -> np.ndarray:
 # ──────────────────────────────────────────────
 
 class AudioDataset(Dataset):
-    def __init__(self, samples, augment: bool = False):
+    def __init__(self, samples, augment: bool = False, minority_threshold: int = 20):
         self.samples = samples
         self.augment = augment
+        self.minority_threshold = minority_threshold
+
+        # Pre-compute which classes are minority (< threshold samples)
+        if augment:
+            counts = {}
+            for s in samples:
+                counts[s["label_idx"]] = counts.get(s["label_idx"], 0) + 1
+            self.minority_classes = {
+                k for k, v in counts.items() if v < minority_threshold
+            }
+        else:
+            self.minority_classes = set()
 
     def __len__(self):
         return len(self.samples)
@@ -85,7 +109,8 @@ class AudioDataset(Dataset):
         if self.augment:
             audio = item["audio"]
             sr = item["sr"]
-            audio = augment_audio(audio, sr)
+            heavy = item["label_idx"] in self.minority_classes
+            audio = augment_audio(audio, sr, heavy=heavy)
             features = extract_features(audio, sr)
         else:
             features = item["features"]
@@ -147,7 +172,7 @@ def load_dataset(base_path="simulation/datasets/audio"):
 
 def train(
     base_path="simulation/datasets/audio",
-    epochs=50,
+    epochs=80,
     batch_size=16,
     learning_rate=0.0005,
     save_path="ai_models/audio/saved_model",
@@ -232,7 +257,7 @@ def train(
     )
 
     model = AudioCNN(num_classes=NUM_CLASSES).to(device)
-    criterion = nn.CrossEntropyLoss(weight=class_weights_tensor)
+    criterion = nn.CrossEntropyLoss(weight=class_weights_tensor, label_smoothing=0.1)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, patience=5, factor=0.5,

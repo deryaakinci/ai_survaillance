@@ -5,6 +5,9 @@ import numpy as np
 import json
 import os
 
+# Minimum confidence to report an anomaly — below this we say "normal"
+MIN_CONFIDENCE = 0.40
+
 
 LABELS = [
     "normal",
@@ -130,12 +133,31 @@ class AudioAnomalyDetector:
         with torch.no_grad():
             output = self.model(tensor)
             probs = torch.softmax(output, dim=1)
-            confidence, predicted_idx = probs.max(1)
 
-        label = self.idx_to_label.get(predicted_idx.item(), "normal")
+        # Get top-2 predictions for smarter decisions
+        top2_probs, top2_idx = probs.topk(2, dim=1)
+        top1_conf = float(top2_probs[0][0])
+        top1_label = self.idx_to_label.get(int(top2_idx[0][0]), "normal")
+        top2_conf = float(top2_probs[0][1])
+        top2_label = self.idx_to_label.get(int(top2_idx[0][1]), "normal")
+
+        # If top prediction is "normal", check if 2nd choice is
+        # an anomaly with decent confidence (borderline case)
+        if top1_label == "normal":
+            if top2_label != "normal" and top2_conf > 0.20:
+                return {
+                    "label": top2_label,
+                    "confidence": round(top2_conf * 0.9, 3),
+                }
+            return {"label": "normal", "confidence": round(top1_conf, 3)}
+
+        # If anomaly confidence is below threshold → report normal
+        if top1_conf < MIN_CONFIDENCE:
+            return {"label": "normal", "confidence": round(1.0 - top1_conf, 3)}
+
         return {
-            "label": label,
-            "confidence": round(confidence.item(), 3),
+            "label": top1_label,
+            "confidence": round(top1_conf, 3),
         }
 
     def predict_from_file(self, file_path: str) -> dict:

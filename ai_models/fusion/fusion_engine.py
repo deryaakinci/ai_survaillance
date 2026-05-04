@@ -123,18 +123,33 @@ class FusionEngine:
         "threatening_voice": {"assault", "robbery", "abuse", "intruder_detected", "weapon_detected", "fighting"},
     }
 
+    # Minimum confidence to consider a prediction real
+    MIN_FUSE_CONFIDENCE = 0.25
+
     def fuse(self, audio_result: dict, visual_result: dict) -> dict:
         """
         Fuses audio and visual results with cross-modal consistency
-        checking.  When the two modalities disagree (e.g. audio says
-        'explosion' but visual says 'abuse') the mismatched label is
-        overridden so the final output stays consistent.
+        checking and confidence thresholding.
+
+        Key improvements:
+        - Predictions below MIN_FUSE_CONFIDENCE are treated as "normal"
+        - Agreement bonus increased to 15% (was 5%)
+        - Disagreement penalty applied more aggressively
         """
         a_label = audio_result.get("label", "normal")
         v_label = visual_result.get("label", "normal")
 
         a_conf = audio_result.get("confidence", 0.0)
         v_conf = visual_result.get("confidence", 0.0)
+
+        # ── Confidence floor ───────────────────────────────────────────
+        # Ignore low-confidence predictions — they're usually noise
+        if a_label != "normal" and a_conf < self.MIN_FUSE_CONFIDENCE:
+            a_label = "normal"
+            a_conf = 1.0 - a_conf   # invert to represent "normal" confidence
+        if v_label != "normal" and v_conf < self.MIN_FUSE_CONFIDENCE:
+            v_label = "normal"
+            v_conf = 1.0 - v_conf
 
         # ── Cross-modal consistency check ──────────────────────────────
         # Visual is generally more reliable for scene classification,
@@ -145,18 +160,21 @@ class FusionEngine:
                 # Audio label doesn't match what the camera sees
                 # → override audio with a label consistent with the visual
                 a_label = v_label          # align to visual scene
-                a_conf  = a_conf * 0.4     # heavily penalise the audio conf
+                a_conf  = a_conf * 0.3     # heavily penalise the audio conf
 
         # When only one modality fires, trust it as-is (no conflict to resolve)
 
         # ── Fused score ────────────────────────────────────────────────
         if a_label != "normal" and v_label != "normal":
             if a_label == v_label:
-                # Both agree → boost confidence
-                fused_score = min(1.0, max(a_conf, v_conf) * 1.05)
+                # Both agree → strong boost (15%)
+                fused_score = min(1.0, max(a_conf, v_conf) * 1.15)
             else:
-                # Both abnormal but different classes → weighted max
-                fused_score = max(a_conf, v_conf)
+                # Both abnormal but different classes → penalised average
+                fused_score = max(a_conf, v_conf) * 0.85
+        elif a_label != "normal" or v_label != "normal":
+            # Only one modality flags anomaly — trust but don't boost
+            fused_score = max(a_conf, v_conf)
         else:
             fused_score = max(a_conf, v_conf)
 

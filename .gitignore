@@ -26,6 +26,15 @@ ai_models/visual/yolo_dataset/
 ai_models/visual/saved_model/*/
 ai_models/audio/saved_model/*/
 
+# Classifier training frames (extracted from videos)
+ai_models/visual/classifier_frames/
+
+# Synthetic audio data (generated from real samples)
+simulation/datasets/audio/**/synth_*.wav
+
+# Backend demo snapshots
+backend/static/snapshots/
+
 # --- PYTHON & BACKEND ---
 venv/
 .venv/
