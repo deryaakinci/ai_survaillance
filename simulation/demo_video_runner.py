@@ -112,6 +112,54 @@ def sample_frame(video_path: str, timestamp_sec: float) -> np.ndarray | None:
     return frame if ret else None
 
 
+def best_visual_in_chunk(
+    video_path: str,
+    visual_model,
+    chunk_start: float,
+    chunk_end: float,
+    n_samples: int = 5,
+) -> dict:
+    """
+    Sample n_samples evenly-spaced frames across the chunk and return
+    the most alarming visual result (anomaly > normal, then highest
+    severity, then highest confidence).
+    """
+    SEVERITY_RANK = {"high": 3, "medium": 2, "low": 1, "": 0}
+    HIGH = {"weapon_detected", "person_down", "explosion", "robbery",
+            "forced_entry", "assault", "abuse"}
+    MEDIUM = {"intruder_detected", "vehicle_intrusion", "fighting",
+              "suspicious_package", "glass_break", "crying_distress", "car_crash"}
+
+    def _sev(label):
+        if label in HIGH:
+            return "high"
+        if label in MEDIUM:
+            return "medium"
+        if label != "normal":
+            return "low"
+        return ""
+
+    best_result = {"label": "normal", "confidence": 0.0}
+    best_rank   = (-1, 0.0)   # (severity_rank, confidence)
+
+    step = (chunk_end - chunk_start) / max(n_samples - 1, 1)
+    for i in range(n_samples):
+        t = chunk_start + i * step
+        frame = sample_frame(video_path, t)
+        if frame is None:
+            continue
+        result = visual_model.predict(frame)
+        label  = result.get("label", "normal")
+        conf   = result.get("confidence", 0.0)
+        srank  = SEVERITY_RANK.get(_sev(label), 0)
+        rank   = (srank, conf)
+        if rank > best_rank:
+            best_rank   = rank
+            best_result = result
+
+    return best_result
+
+
 def severity_color(severity: str) -> str:
     if severity == "high":
         return C.RED
@@ -157,8 +205,8 @@ def post_event(session_info, audio_result, visual_result, fusion_result, alert_f
         requests.post(
             f"{session_info['base_url']}/events/demo_broadcast",
             params={
-                "audio_label": audio_result["label"],
-                "visual_label": visual_result["label"],
+                "audio_label": fusion_result["audio_label"],
+                "visual_label": fusion_result["visual_label"],
                 "audio_confidence": audio_result["confidence"],
                 "visual_confidence": visual_result["confidence"],
                 "fusion_score": fusion_result["fused_score"],
@@ -178,7 +226,6 @@ def post_event(session_info, audio_result, visual_result, fusion_result, alert_f
 def run_demo(
     video_path: str,
     chunk_sec: int = 3,
-    frame_position: str = "first",  # 'first', 'mid', or 'last'
 ):
     if not os.path.isfile(video_path):
         print(_c(C.RED, f"✗ Video not found: {video_path}"))
@@ -256,14 +303,12 @@ def run_demo(
     while chunk_start < duration_sec:
         chunk_end = min(chunk_start + chunk_sec, duration_sec)
 
-        # ── visual: pick a frame within this chunk ─────────────────────────
-        if frame_position == "mid":
-            t_frame = (chunk_start + chunk_end) / 2
-        elif frame_position == "last":
-            t_frame = chunk_end - 0.1
-        else:
-            t_frame = chunk_start
-
+        # ── visual: sample 5 frames across the chunk, use best result ─────────
+        visual_result = best_visual_in_chunk(
+            video_path, visual_model, chunk_start, chunk_end, n_samples=5
+        )
+        # Also grab a single mid-chunk frame for snapshot purposes
+        t_frame = (chunk_start + chunk_end) / 2
         frame = sample_frame(video_path, t_frame)
         if frame is None:
             frame = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -281,7 +326,6 @@ def run_demo(
 
         # ── run models ─────────────────────────────────────────────────────
         audio_result  = audio_model.predict(audio_chunk, sr)
-        visual_result = visual_model.predict(frame)
         fusion_result = fusion.fuse(audio_result, visual_result)
         alert_fired   = alert_logic.should_send_alert(fusion_result)
         severity      = fusion_result["severity"]
@@ -319,7 +363,9 @@ def run_demo(
                 f"audio_conf={a_conf:.2f}  visual_conf={v_conf:.2f}"))
 
         # Send to API if connected (pass frame for snapshot capture)
-        post_event(session_info, audio_result, visual_result, fusion_result, alert_fired, frame)
+        # Use fusion_result["alert"] (raw anomaly flag) instead of the
+        # locally-deduplicated alert_fired — let the backend handle dedup.
+        post_event(session_info, audio_result, visual_result, fusion_result, fusion_result["alert"], frame)
 
         chunk_start += chunk_sec
 
@@ -363,12 +409,6 @@ if __name__ == "__main__":
         help="Length of each analysis window in seconds (default: 3).",
     )
     parser.add_argument(
-        "--frame",
-        choices=["first", "mid", "last"],
-        default="mid",
-        help="Which frame in each chunk to pass to the visual model (default: mid).",
-    )
-    parser.add_argument(
         "--no_color",
         action="store_true",
         help="Disable ANSI colour output.",
@@ -381,5 +421,4 @@ if __name__ == "__main__":
     run_demo(
         video_path=args.video,
         chunk_sec=args.chunk_sec,
-        frame_position=args.frame,
     )

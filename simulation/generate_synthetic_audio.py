@@ -49,7 +49,6 @@ LABELS = [
     "fight_sounds",
     "siren",
     "car_crash",
-    "threatening_voice",
 ]
 
 

@@ -55,8 +55,9 @@ def _build_classifier(num_classes: int):
 
 
 class VisualAnomalyDetector:
-    # COCO labels that indicate a weapon is visible
-    WEAPON_COCO_LABELS = {"knife", "gun", "scissors", "baseball bat"}
+    # COCO labels that map to weapons — note: "gun" is NOT a COCO class,
+    # base yolov8n cannot detect firearms; gun scenes rely on ResNet18.
+    WEAPON_COCO_LABELS = {"knife", "scissors", "baseball bat"}
 
     def __init__(self):
         self.is_classifier = False
@@ -146,7 +147,7 @@ class VisualAnomalyDetector:
         if self.yolo_detector is None:
             return None
 
-        results = self.yolo_detector(frame, verbose=False, conf=0.25, imgsz=640)
+        results = self.yolo_detector(frame, verbose=False, conf=0.05, imgsz=640)
         best_weapon_conf = 0.0
 
         for result in results:
@@ -157,7 +158,7 @@ class VisualAnomalyDetector:
                 if label in self.WEAPON_COCO_LABELS and conf > best_weapon_conf:
                     best_weapon_conf = conf
 
-        if best_weapon_conf > 0.25:
+        if best_weapon_conf > 0.05:
             return {
                 "label": "weapon_detected",
                 "confidence": round(min(best_weapon_conf * 1.1, 0.99), 3),
@@ -195,7 +196,7 @@ class VisualAnomalyDetector:
         # If top prediction is "normal", check if the 2nd prediction
         # is an anomaly with decent confidence — might be borderline
         if top1_label == "normal":
-            if top2_label != "normal" and top2_conf > 0.20:
+            if top2_label != "normal" and top2_conf > 0.25:
                 # Borderline case: report the anomaly with reduced confidence
                 return {
                     "label": top2_label,

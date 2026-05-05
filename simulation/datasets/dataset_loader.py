@@ -20,7 +20,6 @@ class AudioDatasetLoader:
             "fight_sounds",
             "siren",
             "car_crash",
-            "threatening_voice",
         ]
 
     def load_class(self, class_name: str):

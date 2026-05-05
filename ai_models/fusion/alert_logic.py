@@ -80,7 +80,6 @@ class AlertLogic:
             "fight_sounds": "Fight detected",
             "siren": "Emergency siren nearby",
             "car_crash": "Car crash detected",
-            "threatening_voice": "Threatening voice detected",
         }
         prefix = "🚨" if severity == "high" else "⚠️"
         return f"{prefix} {titles.get(audio_label, 'Alert detected')}"

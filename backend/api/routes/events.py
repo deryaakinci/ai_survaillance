@@ -202,7 +202,11 @@ async def demo_broadcast_event(
         # ── Deduplicated alert + notification ──────────────────────────
         if alert_fired:
             seen = _broadcast_seen.setdefault(user.id, set())
-            dedup_key = audio_label  # one alert per unique threat name
+            # Use both labels as dedup key so different visual threats
+            # aren't suppressed just because audio_label is the same
+            threat_a = audio_label if audio_label != "normal" else ""
+            threat_v = visual_label if visual_label != "normal" else ""
+            dedup_key = f"{threat_a}|{threat_v}"
 
             if dedup_key not in seen:
                 seen.add(dedup_key)

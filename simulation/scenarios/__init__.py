@@ -8,7 +8,6 @@ from simulation.scenarios import (
     fight_sounds,
     siren,
     car_crash,
-    threatening_voice,
     intruder_detected,
     weapon_detected,
     visual_explosion,

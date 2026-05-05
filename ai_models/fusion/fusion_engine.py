@@ -1,6 +1,5 @@
 import torch
 import numpy as np
-import time
 from datetime import datetime
 
 class FusionEngine:
@@ -120,11 +119,13 @@ class FusionEngine:
         "fight_sounds":      {"fighting", "assault", "abuse", "person_down", "robbery"},
         "siren":             {"vehicle_intrusion", "person_down", "explosion"},
         "car_crash":         {"vehicle_intrusion", "explosion", "person_down"},
-        "threatening_voice": {"assault", "robbery", "abuse", "intruder_detected", "weapon_detected", "fighting"},
     }
 
     # Minimum confidence to consider a prediction real
-    MIN_FUSE_CONFIDENCE = 0.25
+    # Audio stays strict (0.45) to filter ambient-sound false positives.
+    # Visual is looser (0.30) because scene classification is harder.
+    MIN_AUDIO_CONFIDENCE = 0.25
+    MIN_VISUAL_CONFIDENCE = 0.30
 
     def fuse(self, audio_result: dict, visual_result: dict) -> dict:
         """
@@ -132,7 +133,8 @@ class FusionEngine:
         checking and confidence thresholding.
 
         Key improvements:
-        - Predictions below MIN_FUSE_CONFIDENCE are treated as "normal"
+        - Audio predictions below MIN_AUDIO_CONFIDENCE are treated as "normal"
+        - Visual predictions below MIN_VISUAL_CONFIDENCE are treated as "normal"
         - Agreement bonus increased to 15% (was 5%)
         - Disagreement penalty applied more aggressively
         """
@@ -143,13 +145,20 @@ class FusionEngine:
         v_conf = visual_result.get("confidence", 0.0)
 
         # ── Confidence floor ───────────────────────────────────────────
-        # Ignore low-confidence predictions — they're usually noise
-        if a_label != "normal" and a_conf < self.MIN_FUSE_CONFIDENCE:
+        if a_label != "normal" and a_conf < self.MIN_AUDIO_CONFIDENCE:
             a_label = "normal"
-            a_conf = 1.0 - a_conf   # invert to represent "normal" confidence
-        if v_label != "normal" and v_conf < self.MIN_FUSE_CONFIDENCE:
+            a_conf = 1.0 - a_conf
+        if v_label != "normal" and v_conf < self.MIN_VISUAL_CONFIDENCE:
             v_label = "normal"
             v_conf = 1.0 - v_conf
+
+        # ── Require visual confirmation (soft) ─────────────────────────
+        # Suppress audio-only alerts, but only when the camera is
+        # *confidently* normal (≥ 0.80). If the visual model is uncertain,
+        # the audio is still trusted.
+        if a_label != "normal" and v_label == "normal" and v_conf >= 0.80:
+            a_label = "normal"
+            a_conf = 1.0 - a_conf
 
         # ── Cross-modal consistency check ──────────────────────────────
         # Visual is generally more reliable for scene classification,
@@ -161,6 +170,37 @@ class FusionEngine:
                 # → override audio with a label consistent with the visual
                 a_label = v_label          # align to visual scene
                 a_conf  = a_conf * 0.3     # heavily penalise the audio conf
+
+        # ── Re-check audio confidence after cross-modal override ──────────
+        # The cross-modal penalty (×0.3) can push audio confidence below the
+        # minimum threshold. Re-check so heavily-penalized overrides don't
+        # generate spurious alerts (e.g. forced_entry → vehicle_intrusion at 0.22).
+        if a_label != "normal" and a_conf < self.MIN_AUDIO_CONFIDENCE:
+            a_label = "normal"
+            a_conf = 1.0 - a_conf
+
+        # ── Suppress weak visual-only anomalies ────────────────────────
+        # Runs AFTER cross-modal re-check so it sees the final audio state.
+        # If audio is confidently silent and visual is only weakly anomalous,
+        # the visual classification is almost certainly a false positive
+        # (e.g. news/weather footage, busy backgrounds). Genuine threats
+        # either trigger audio confirmation or produce high visual confidence.
+        if (v_label != "normal" and v_conf < 0.40
+                and a_label == "normal" and a_conf >= 0.30):
+            v_label = "normal"
+            v_conf = 1.0 - v_conf
+
+        # ── Weapon upgrade ─────────────────────────────────────────────
+        # Base YOLO cannot detect firearms; the ResNet18 rarely outputs
+        # weapon_detected for real videos. Best proxy: if the microphone
+        # hears a gunshot while the camera sees a violent scene, the most
+        # likely explanation is that weapons are present.
+        WEAPON_AUDIO   = {"gunshot", "fight_sounds"}
+        WEAPON_VISUAL  = {"fighting", "assault", "robbery", "abuse",
+                          "intruder_detected", "forced_entry", "person_down"}
+        if a_label in WEAPON_AUDIO and v_label in WEAPON_VISUAL:
+            v_label = "weapon_detected"
+            v_conf  = max(v_conf, 0.75)
 
         # When only one modality fires, trust it as-is (no conflict to resolve)
 
@@ -186,7 +226,7 @@ class FusionEngine:
             high = [
                 "weapon_detected", "person_down", "explosion", "robbery",
                 "forced_entry", "assault", "abuse", "gunshot", "scream",
-                "fight_sounds", "threatening_voice",
+                "fight_sounds",
             ]
             medium = [
                 "intruder_detected", "vehicle_intrusion", "fighting",

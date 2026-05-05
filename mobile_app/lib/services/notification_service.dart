@@ -88,7 +88,6 @@ class NotificationService {
       'fight_sounds': 'Fight detected',
       'siren': 'Emergency siren nearby',
       'car_crash': 'Car crash detected',
-      'threatening_voice': 'Threatening voice detected',
     };
     return '$prefix ${titles[alert.audioLabel] ?? 'Alert detected'}';
   }

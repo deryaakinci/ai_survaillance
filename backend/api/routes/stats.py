@@ -99,11 +99,14 @@ def get_stats_overview(
         Alert.severity == "low",
     ).count()
 
-    # ── Alert type breakdown (by audio_label) ─────────────────────────
+    # ── Alert type breakdown (by audio_label OR visual_label) ────────
+    from sqlalchemy import or_
     type_keys = [
         "gunshot", "explosion", "scream", "forced_entry",
         "glass_break", "fight", "weapon",
-        "crying_distress", "siren", "car_crash", "threatening_voice",
+        "crying_distress", "siren", "car_crash",
+        "robbery", "intruder", "vehicle_intrusion", "assault",
+        "abuse", "person_down",
     ]
 
     alert_types = {}
@@ -111,9 +114,13 @@ def get_stats_overview(
         count = db.query(Alert).filter(
             Alert.user_id == user_id,
             Alert.timestamp >= since,
-            Alert.audio_label.ilike(f"%{key}%"),
+            or_(
+                Alert.audio_label.ilike(f"%{key}%"),
+                Alert.visual_label.ilike(f"%{key}%"),
+            ),
         ).count()
-        alert_types[key] = count
+        if count > 0:
+            alert_types[key] = count
 
     # ── Most active hours (24-element list, index = hour of day) ──────
     hourly_rows = (

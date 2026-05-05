@@ -19,7 +19,6 @@ class AlertsScreen extends StatelessWidget {
       'fight_sounds': '⚠️ Fight detected',
       'siren': '⚠️ Emergency siren nearby',
       'car_crash': '🚨 Car crash detected',
-      'threatening_voice': '⚠️ Threatening voice',
       'weapon': '🚨 Weapon detected',
       'fight': '⚠️ Fight detected',
       'assault': '🚨 Assault detected',

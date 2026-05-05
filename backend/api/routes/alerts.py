@@ -149,7 +149,6 @@ def _get_title(audio_label: str, severity: str) -> str:
         "fight_sounds": "Fight detected",
         "siren": "Emergency siren nearby",
         "car_crash": "Car crash detected",
-        "threatening_voice": "Threatening voice",
     }
     prefix = "🚨" if severity == "high" else "⚠️"
     return f"{prefix} {titles.get(audio_label, 'Alert detected')}"

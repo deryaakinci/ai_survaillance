@@ -195,8 +195,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         .toList()
       ..sort((a, b) => b.value.compareTo(a.value));
 
-    // Take top entries that fit the chart
-    final topEntries = entries.take(chartColors.length).toList();
+    // Limit to top 5 entries to avoid cramping
+    final topEntries = entries.take(5).toList();
     final maxCount = topEntries.isNotEmpty
         ? topEntries.first.value
         : 1;
@@ -226,7 +226,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           else
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: topEntries.asMap().entries.map((entry) {
                 final i = entry.key;
                 final e = entry.value;
@@ -235,10 +234,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 final displayLabel = label.length > 8
                     ? '${label.substring(0, 7)}…'
                     : label;
-                return _chartBar(
-                  displayLabel,
-                  barHeight,
-                  chartColors[i % chartColors.length],
+                return Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.only(left: i == 0 ? 0 : 4, right: i == topEntries.length - 1 ? 0 : 4),
+                    child: _chartBar(
+                      displayLabel,
+                      barHeight,
+                      chartColors[i % chartColors.length],
+                    ),
+                  ),
                 );
               }).toList(),
             ),
@@ -252,7 +256,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
         Container(
-          width: MediaQuery.of(context).size.width * 0.18,
+          width: double.infinity,
           height: height,
           decoration: BoxDecoration(
             color: color,
@@ -260,7 +264,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ),
         const SizedBox(height: 8),
-        Text(label, style: const TextStyle(color: Color(0xFF666666), fontSize: 10, fontWeight: FontWeight.w500)),
+        Text(
+          label,
+          textAlign: TextAlign.center,
+          overflow: TextOverflow.ellipsis,
+          maxLines: 1,
+          style: const TextStyle(color: Color(0xFF666666), fontSize: 10, fontWeight: FontWeight.w500),
+        ),
       ],
     );
   }

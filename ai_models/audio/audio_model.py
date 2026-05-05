@@ -6,7 +6,7 @@ import json
 import os
 
 # Minimum confidence to report an anomaly — below this we say "normal"
-MIN_CONFIDENCE = 0.40
+MIN_CONFIDENCE = 0.25
 
 
 LABELS = [
@@ -20,7 +20,6 @@ LABELS = [
     "fight_sounds",
     "siren",
     "car_crash",
-    "threatening_voice",
 ]
 NUM_CLASSES = len(LABELS)
 LABEL_TO_IDX = {label: idx for idx, label in enumerate(LABELS)}
@@ -101,11 +100,12 @@ class AudioAnomalyDetector:
                 raw = json.load(f)
                 self.idx_to_label = {int(k): v for k, v in raw.items()}
 
-        num_classes = len(self.idx_to_label)
+        # Derive num_classes from the checkpoint itself so the architecture
+        # stays compatible even if labels.json was updated after training.
+        checkpoint = torch.load(self.MODEL_PATH, map_location=self.device)
+        num_classes = checkpoint["classifier.7.weight"].shape[0]
         self.model = AudioCNN(num_classes=num_classes).to(self.device)
-        self.model.load_state_dict(
-            torch.load(self.MODEL_PATH, map_location=self.device)
-        )
+        self.model.load_state_dict(checkpoint)
         self.model.eval()
         print(f"[AudioAnomalyDetector] Model loaded from {self.MODEL_PATH}")
 
@@ -170,7 +170,7 @@ class AudioAnomalyDetector:
     def get_severity(self, label: str) -> str:
         high = [
             "gunshot", "explosion", "scream",
-            "fight_sounds", "forced_entry", "threatening_voice",
+            "fight_sounds", "forced_entry",
         ]
         medium = [
             "glass_break", "crying_distress",
