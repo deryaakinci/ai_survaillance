@@ -12,14 +12,11 @@ class AudioDatasetLoader:
         self.classes = [
             "normal",
             "gunshot",
-            "explosion",
-            "scream",
-            "glass_break",
+            "impact",
+            "distress_sounds",
             "forced_entry",
-            "crying_distress",
             "fight_sounds",
             "siren",
-            "car_crash",
         ]
 
     def load_class(self, class_name: str):
@@ -79,16 +76,13 @@ class VideoDatasetLoader:
         self.base_path = base_path
         self.classes = [
             "normal",
-            "intruder_detected",
             "weapon_detected",
             "explosion",
             "vehicle_intrusion",
-            "abuse",
-            "fighting",
-            "assault",
+            "violence",
             "robbery",
             "person_down",
-            "forced_entry",
+            "intrusion_detected",
             "suspicious_package",
         ]
 

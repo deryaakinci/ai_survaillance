@@ -3,7 +3,7 @@ from simulation.scenarios.base import load_scenario
 def simulate() -> dict:
     return load_scenario(
         name="Person down",
-        audio_label="scream",
+        audio_label="distress_sounds",
         visual_label="person_down",
         expected_severity="high",
     )

@@ -4,6 +4,6 @@ def simulate() -> dict:
     return load_scenario(
         name="Fighting",
         audio_label="fight_sounds",
-        visual_label="fighting",
+        visual_label="violence",
         expected_severity="high",
     )

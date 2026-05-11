@@ -7,10 +7,10 @@ class AlertLogic:
 
     CRITICAL_LABELS = [
         "gunshot",
-        "explosion",
+        "impact",
         "weapon_detected",
         "person_down",
-        "scream",
+        "distress_sounds",
     ]
 
     def should_send_alert(self, fusion_result: dict) -> bool:
@@ -72,14 +72,11 @@ class AlertLogic:
     def _get_notification_title(self, audio_label: str, severity: str) -> str:
         titles = {
             "gunshot": "Gunshot detected",
-            "explosion": "Explosion detected",
-            "scream": "Scream detected",
-            "glass_break": "Glass break detected",
+            "impact": "Impact detected",
+            "distress_sounds": "Distress sounds detected",
             "forced_entry": "Forced entry detected",
-            "crying_distress": "Distress detected",
             "fight_sounds": "Fight detected",
             "siren": "Emergency siren nearby",
-            "car_crash": "Car crash detected",
         }
         prefix = "🚨" if severity == "high" else "⚠️"
         return f"{prefix} {titles.get(audio_label, 'Alert detected')}"

@@ -172,7 +172,7 @@ def load_dataset(base_path="simulation/datasets/audio"):
 
 def train(
     base_path="simulation/datasets/audio",
-    epochs=80,
+    epochs=100,
     batch_size=16,
     learning_rate=0.0005,
     save_path="ai_models/audio/saved_model",

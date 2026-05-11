@@ -40,12 +40,12 @@ def seed_data():
         # 2. Add Dummy Alerts for each user
         print("Adding dummy alerts for users...")
         alert_types = [
-            ("gunshot", "flash", "high"),
-            ("scream", "running_person", "high"),
-            ("glass_break", "broken_window", "medium"),
-            ("car_crash", "smoke", "high"),
-            ("fight_sounds", "two_people_fighting", "medium"),
-            ("crying_distress", "sad_person", "low"),
+            ("gunshot", "weapon_detected", "high"),
+            ("distress_sounds", "person_down", "high"),
+            ("impact", "explosion", "high"),
+            ("fight_sounds", "violence", "high"),
+            ("forced_entry", "intrusion_detected", "high"),
+            ("siren", "vehicle_intrusion", "medium"),
         ]
         
         zones = ["Front Door", "Backyard", "Garage", "Living Room"]

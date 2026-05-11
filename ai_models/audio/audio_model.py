@@ -12,14 +12,11 @@ MIN_CONFIDENCE = 0.25
 LABELS = [
     "normal",
     "gunshot",
-    "explosion",
-    "scream",
-    "glass_break",
+    "impact",
+    "distress_sounds",
     "forced_entry",
-    "crying_distress",
     "fight_sounds",
     "siren",
-    "car_crash",
 ]
 NUM_CLASSES = len(LABELS)
 LABEL_TO_IDX = {label: idx for idx, label in enumerate(LABELS)}
@@ -169,13 +166,10 @@ class AudioAnomalyDetector:
 
     def get_severity(self, label: str) -> str:
         high = [
-            "gunshot", "explosion", "scream",
+            "gunshot", "impact", "distress_sounds",
             "fight_sounds", "forced_entry",
         ]
-        medium = [
-            "glass_break", "crying_distress",
-            "car_crash",
-        ]
+        medium = []
         low = ["siren"]
 
         if label in high:

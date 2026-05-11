@@ -9,20 +9,19 @@ import os
 
 LABELS = [
     "normal",
-    "intruder_detected",
     "weapon_detected",
     "explosion",
     "vehicle_intrusion",
-    "abuse",
-    "fighting",
-    "assault",
+    "violence",
     "robbery",
     "person_down",
-    "forced_entry",
+    "intrusion_detected",
+    "suspicious_package",
 ]
 
 CLASSIFIER_MODEL_PATH = "ai_models/visual/saved_model/best_classifier.pth"
-FALLBACK_MODEL_PATH = "yolov8n.pt"
+FINETUNED_YOLO_PATH   = "ai_models/visual/saved_model/surveillance_model/weights/best.pt"
+FALLBACK_MODEL_PATH   = "yolov8n.pt"
 
 # Minimum confidence to report an anomaly — below this we say "normal"
 MIN_CONFIDENCE = 0.30
@@ -41,7 +40,6 @@ _inference_transform = transforms.Compose([
 
 
 def _build_classifier(num_classes: int):
-    """Rebuild the same architecture used during training."""
     model = models.resnet18(weights=None)
     in_features = model.fc.in_features
     model.fc = nn.Sequential(
@@ -55,163 +53,167 @@ def _build_classifier(num_classes: int):
 
 
 class VisualAnomalyDetector:
-    # COCO labels that map to weapons — note: "gun" is NOT a COCO class,
-    # base yolov8n cannot detect firearms; gun scenes rely on ResNet18.
     WEAPON_COCO_LABELS = {"knife", "scissors", "baseball bat"}
 
+    HIGH_PRIORITY_LABELS = {
+        "weapon_detected", "explosion", "person_down",
+        "intrusion_detected", "violence", "robbery",
+    }
+
     def __init__(self):
-        self.is_classifier = False
-        self.is_finetuned = False
-        self.yolo_detector = None  # secondary object detector
+        self.resnet  = None   # ResNet18 scene classifier
+        self.yolo    = None   # fine-tuned surveillance YOLO
+        self.yolo_base = None # base yolov8n for COCO weapon scan
         self.device = torch.device(
             "mps" if torch.backends.mps.is_available()
             else "cuda" if torch.cuda.is_available()
             else "cpu"
         )
 
+        # ── Load ResNet18 ──────────────────────────────────────────────
         if os.path.exists(CLASSIFIER_MODEL_PATH):
-            self.model = _build_classifier(len(LABELS)).to(self.device)
-            self.model.load_state_dict(
+            self.resnet = _build_classifier(len(LABELS)).to(self.device)
+            self.resnet.load_state_dict(
                 torch.load(CLASSIFIER_MODEL_PATH, map_location=self.device)
             )
-            self.model.eval()
-            self.is_classifier = True
-            print(
-                f"[VisualAnomalyDetector] ResNet18 classifier loaded from "
-                f"{CLASSIFIER_MODEL_PATH}"
-            )
-
-            # Load YOLO base model as a secondary weapon/object detector
-            try:
-                from ultralytics import YOLO
-                if os.path.exists(FALLBACK_MODEL_PATH):
-                    self.yolo_detector = YOLO(FALLBACK_MODEL_PATH)
-                    print(
-                        "[VisualAnomalyDetector] YOLO object detector loaded "
-                        "as secondary weapon scanner"
-                    )
-            except ImportError:
-                pass
+            self.resnet.eval()
+            print(f"[VisualAnomalyDetector] ResNet18 loaded from {CLASSIFIER_MODEL_PATH}")
         else:
-            # Fallback: try YOLO (fine-tuned or base)
-            try:
-                from ultralytics import YOLO
+            print("[VisualAnomalyDetector] ResNet18 not found — run train_visual_classifier.py")
 
-                FINETUNED_MODEL_PATH = (
-                    "ai_models/visual/saved_model/surveillance_model/weights/best.pt"
-                )
-                if os.path.exists(FINETUNED_MODEL_PATH):
-                    self.model = YOLO(FINETUNED_MODEL_PATH)
-                    self.is_finetuned = True
-                    print(
-                        f"[VisualAnomalyDetector] YOLO fine-tuned model loaded "
-                        f"from {FINETUNED_MODEL_PATH}"
-                    )
-                else:
-                    self.model = YOLO(FALLBACK_MODEL_PATH)
-                    print(
-                        "[VisualAnomalyDetector] No classifier or fine-tuned model "
-                        "found — using base yolov8n.pt. Run train_visual_classifier.py first."
-                    )
-            except ImportError:
-                self.model = None
-                print(
-                    "[VisualAnomalyDetector] No model available. "
-                    "Run train_visual_classifier.py first."
-                )
+        # ── Load YOLO models ────────────────────────────────────────────
+        # Always load base YOLO for COCO weapon detection (knife, scissors,
+        # baseball bat).  Its pretrained weapon knowledge is stronger than
+        # anything our small custom dataset can teach.
+        try:
+            from ultralytics import YOLO as _YOLO
+            self.yolo_base = _YOLO(FALLBACK_MODEL_PATH)
+            print("[VisualAnomalyDetector] Base YOLO loaded for COCO weapon detection")
 
-    # High-severity labels that should take priority even at lower confidence
-    HIGH_PRIORITY_LABELS = {
-        "weapon_detected", "explosion", "person_down",
-        "forced_entry", "assault", "robbery", "abuse",
-    }
+            if os.path.exists(FINETUNED_YOLO_PATH):
+                self.yolo = _YOLO(FINETUNED_YOLO_PATH)
+                print(f"[VisualAnomalyDetector] Fine-tuned YOLO loaded from {FINETUNED_YOLO_PATH}")
+        except ImportError:
+            print("[VisualAnomalyDetector] ultralytics not installed — YOLO unavailable")
+
+    # ── Public entry point ────────────────────────────────────────────
 
     def predict(self, frame) -> dict:
-        if self.is_classifier:
-            return self._predict_classifier(frame)
-        elif self.is_finetuned:
-            from ultralytics import YOLO
-            results = self.model(frame, verbose=False, conf=0.10, imgsz=1280)
-            return self._predict_finetuned(results)
-        elif self.model is not None:
-            results = self.model(frame, verbose=False, conf=0.10, imgsz=1280)
-            return self._predict_base(frame, results)
-        else:
-            return {"label": "normal", "confidence": 0.0}
-
-    def _detect_weapon_yolo(self, frame) -> dict | None:
-        """
-        Run YOLO base model to check for weapon objects (knife, gun, etc.).
-        Returns a weapon result dict if found, or None.
-        """
-        if self.yolo_detector is None:
-            return None
-
-        results = self.yolo_detector(frame, verbose=False, conf=0.05, imgsz=640)
-        best_weapon_conf = 0.0
-
-        for result in results:
-            for box in result.boxes:
-                cls_id = int(box.cls[0])
-                label = self.yolo_detector.names.get(cls_id, "")
-                conf = float(box.conf[0])
-                if label in self.WEAPON_COCO_LABELS and conf > best_weapon_conf:
-                    best_weapon_conf = conf
-
-        if best_weapon_conf > 0.05:
-            return {
-                "label": "weapon_detected",
-                "confidence": round(min(best_weapon_conf * 1.1, 0.99), 3),
-            }
-        return None
-
-    def _predict_classifier(self, frame) -> dict:
-        """
-        ResNet18 classifier: takes a full frame, returns scene-level label.
-        Also runs YOLO as a secondary weapon scanner — if YOLO detects a
-        weapon object (gun, knife), it overrides the scene classification.
-        """
-        # ── Secondary check: YOLO weapon scan ──────────────────────────
-        weapon_hit = self._detect_weapon_yolo(frame)
+        # ── COCO weapon scan first — highest priority ──────────────
+        weapon_hit = self._run_weapon_scan(frame)
         if weapon_hit is not None:
             return weapon_hit
 
-        # ── Primary: ResNet18 scene classification ─────────────────────
-        # Convert BGR (OpenCV) → RGB → PIL → tensor
+        yolo_result   = self._run_yolo(frame)
+        resnet_result = self._run_resnet(frame)
+
+        if yolo_result is None and resnet_result is None:
+            return {"label": "normal", "confidence": 0.0}
+        if yolo_result is None:
+            result = resnet_result
+        elif resnet_result is None:
+            result = yolo_result
+        else:
+            result = self._ensemble(yolo_result, resnet_result)
+
+        # If undetermined (low confidence), treat as normal
+        if result["label"] != "normal" and result["confidence"] < MIN_CONFIDENCE:
+            return {"label": "normal", "confidence": round(1.0 - result["confidence"], 3)}
+
+        return result
+
+    # ── Per-model runners ─────────────────────────────────────────────
+
+    def _run_weapon_scan(self, frame) -> dict | None:
+        """Use base YOLO (COCO-pretrained) to detect weapons.
+        This preserves YOLO's strong weapon knowledge even after fine-tuning."""
+        if self.yolo_base is None:
+            return None
+
+        results = self.yolo_base(frame, verbose=False, conf=0.35)
+
+        best_conf = 0.0
+        for result in results:
+            for box in result.boxes:
+                cls_id = int(box.cls[0])
+                label = self.yolo_base.names[cls_id]
+                confidence = float(box.conf[0])
+                if label in self.WEAPON_COCO_LABELS and confidence > best_conf:
+                    best_conf = confidence
+
+        if best_conf > 0.35:
+            return {"label": "weapon_detected", "confidence": round(min(best_conf * 1.1, 0.99), 3)}
+
+        return None
+
+    def _run_yolo(self, frame) -> dict | None:
+        """Run the fine-tuned YOLO for surveillance classes.
+        Falls back to base YOLO heuristic mapping if no fine-tuned model."""
+        if self.yolo is not None:
+            results = self.yolo(frame, verbose=False, conf=0.10, imgsz=1280)
+            return self._predict_finetuned(results)
+        if self.yolo_base is not None:
+            results = self.yolo_base(frame, verbose=False, conf=0.10, imgsz=1280)
+            return self._predict_base(frame, results)
+        return None
+
+    def _run_resnet(self, frame) -> dict | None:
+        if self.resnet is None:
+            return None
+
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         img = Image.fromarray(frame_rgb)
         tensor = _inference_transform(img).unsqueeze(0).to(self.device)
 
         with torch.no_grad():
-            output = self.model(tensor)
-            probs = torch.softmax(output, dim=1)
+            output = self.resnet(tensor)
+            probs  = torch.softmax(output, dim=1)
 
-        # Get top-2 predictions for smarter decision-making
         top2_probs, top2_idx = probs.topk(2, dim=1)
-        top1_conf = float(top2_probs[0][0])
+        top1_conf  = float(top2_probs[0][0])
         top1_label = LABELS[int(top2_idx[0][0])]
-        top2_conf = float(top2_probs[0][1])
+        top2_conf  = float(top2_probs[0][1])
         top2_label = LABELS[int(top2_idx[0][1])]
 
-        # If top prediction is "normal", check if the 2nd prediction
-        # is an anomaly with decent confidence — might be borderline
         if top1_label == "normal":
             if top2_label != "normal" and top2_conf > 0.25:
-                # Borderline case: report the anomaly with reduced confidence
-                return {
-                    "label": top2_label,
-                    "confidence": round(top2_conf * 0.9, 3),
-                }
+                return {"label": top2_label, "confidence": round(top2_conf * 0.9, 3)}
             return {"label": "normal", "confidence": round(top1_conf, 3)}
 
-        # If anomaly confidence is below threshold, report normal
         if top1_conf < MIN_CONFIDENCE:
             return {"label": "normal", "confidence": round(1.0 - top1_conf, 3)}
 
-        return {
-            "label": top1_label,
-            "confidence": round(top1_conf, 3),
-        }
+        return {"label": top1_label, "confidence": round(top1_conf, 3)}
+
+    # ── Ensemble consensus ────────────────────────────────────────────
+
+    def _ensemble(self, yolo: dict, resnet: dict) -> dict:
+        y_label = yolo["label"]
+        y_conf  = yolo["confidence"]
+        r_label = resnet["label"]
+        r_conf  = resnet["confidence"]
+
+        # YOLO has absolute priority on weapons — no consensus needed
+        if y_label == "weapon_detected":
+            return {"label": "weapon_detected", "confidence": round(min(y_conf * 1.1, 0.99), 3)}
+
+        # Both agree → strong confidence boost
+        if y_label == r_label:
+            return {"label": y_label, "confidence": round(min(max(y_conf, r_conf) * 1.15, 0.99), 3)}
+
+        # Both flag an anomaly but disagree on class → YOLO wins, small penalty
+        if y_label != "normal" and r_label != "normal":
+            return {"label": y_label, "confidence": round(max(y_conf, r_conf) * 0.85, 3)}
+
+        # Only YOLO fires → trust it with a small penalty
+        if y_label != "normal":
+            return {"label": y_label, "confidence": round(y_conf * 0.85, 3)}
+
+        # Only ResNet18 fires → trust it with a small penalty
+        if r_label != "normal":
+            return {"label": r_label, "confidence": round(r_conf * 0.85, 3)}
+
+        return {"label": "normal", "confidence": round(max(y_conf, r_conf), 3)}
 
     def _predict_finetuned(self, results) -> dict:
         """
@@ -262,16 +264,19 @@ class VisualAnomalyDetector:
     def _predict_base(self, frame, results) -> dict:
         """
         Fallback: base yolov8n outputs COCO classes.
-        Map them heuristically to our surveillance labels.
+        Only map detections that COCO can reliably identify — weapons,
+        vehicles, and suspicious packages.  Action-based classes like
+        violence, robbery, explosion are left to the fine-tuned model
+        and ResNet since COCO cannot detect actions.
         """
-        weapon_objects = ["knife", "gun", "scissors", "baseball bat"]
+        weapon_objects = ["knife", "scissors", "baseball bat"]
         vehicle_objects = ["car", "motorcycle", "truck", "bus"]
 
         detections = []
         for result in results:
             for box in result.boxes:
                 cls_id = int(box.cls[0])
-                label = self.model.names[cls_id]
+                label = self.yolo_base.names[cls_id]
                 confidence = float(box.conf[0])
                 if confidence > 0.4:
                     detections.append({
@@ -283,28 +288,21 @@ class VisualAnomalyDetector:
         if not detections:
             return {"label": "normal", "confidence": 0.95}
 
-        person_count = sum(1 for d in detections if d["label"] == "person")
         has_weapon = any(d["label"] in weapon_objects for d in detections)
         has_vehicle = any(d["label"] in vehicle_objects for d in detections)
-        has_backpack = any(d["label"] == "backpack" for d in detections)
-        is_dark = self._check_low_light(frame)
+        has_backpack = any(d["label"] in ["backpack", "suitcase"] for d in detections)
+        person_count = sum(1 for d in detections if d["label"] == "person")
 
+        # Only map classes that COCO can actually detect as objects
         if has_weapon:
-            return {"label": "weapon_detected", "confidence": 0.98}
-        if person_count >= 1 and self._check_person_down(detections):
-            return {"label": "person_down", "confidence": 0.91}
-        if person_count >= 4:
-            return {"label": "assault", "confidence": round(min(0.70 + person_count * 0.05, 0.97), 3)}
-        if person_count in [2, 3]:
-            return {"label": "explosion", "confidence": round(min(0.65 + person_count * 0.07, 0.95), 3)}
-        if person_count == 1 and is_dark:
-            return {"label": "robbery", "confidence": 0.87}
-        if person_count == 1:
-            return {"label": "intruder_detected", "confidence": 0.88}
+            best = max((d["confidence"] for d in detections if d["label"] in weapon_objects), default=0.9)
+            return {"label": "weapon_detected", "confidence": round(best, 3)}
         if has_backpack and person_count == 0:
             return {"label": "suspicious_package", "confidence": 0.83}
         if has_vehicle and person_count == 0:
             return {"label": "vehicle_intrusion", "confidence": 0.82}
+        if person_count >= 1 and self._check_person_down(detections):
+            return {"label": "person_down", "confidence": 0.75}
 
         return {"label": "normal", "confidence": 0.90}
 
@@ -336,11 +334,10 @@ class VisualAnomalyDetector:
     def get_severity(self, label: str) -> str:
         high = [
             "weapon_detected", "person_down", "explosion",
-            "robbery", "forced_entry", "assault", "abuse"
+            "robbery", "intrusion_detected", "violence",
         ]
         medium = [
-            "intruder_detected", "vehicle_intrusion",
-            "fighting", "suspicious_package",
+            "vehicle_intrusion", "suspicious_package",
         ]
         low = []
 

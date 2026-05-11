@@ -110,15 +110,12 @@ class FusionEngine:
     # with.  If the visual label is NOT in this set the audio prediction is
     # considered unreliable and gets overridden.
     AUDIO_VISUAL_COMPAT = {
-        "gunshot":           {"weapon_detected", "robbery", "assault", "fighting", "person_down"},
-        "explosion":         {"explosion", "person_down", "vehicle_intrusion"},
-        "scream":            {"assault", "abuse", "robbery", "fighting", "person_down", "intruder_detected", "forced_entry"},
-        "glass_break":       {"forced_entry", "intruder_detected", "robbery", "weapon_detected"},
-        "forced_entry":      {"forced_entry", "intruder_detected", "robbery"},
-        "crying_distress":   {"abuse", "person_down", "assault", "robbery"},
-        "fight_sounds":      {"fighting", "assault", "abuse", "person_down", "robbery"},
-        "siren":             {"vehicle_intrusion", "person_down", "explosion"},
-        "car_crash":         {"vehicle_intrusion", "explosion", "person_down"},
+        "gunshot":        {"weapon_detected", "robbery", "violence", "person_down"},
+        "impact":         {"explosion", "person_down", "vehicle_intrusion"},
+        "distress_sounds": {"violence", "robbery", "person_down", "intrusion_detected"},
+        "forced_entry":   {"intrusion_detected", "robbery"},
+        "fight_sounds":   {"violence", "person_down", "robbery"},
+        "siren":          {"vehicle_intrusion", "person_down", "explosion"},
     }
 
     # Minimum confidence to consider a prediction real
@@ -196,8 +193,7 @@ class FusionEngine:
         # hears a gunshot while the camera sees a violent scene, the most
         # likely explanation is that weapons are present.
         WEAPON_AUDIO   = {"gunshot", "fight_sounds"}
-        WEAPON_VISUAL  = {"fighting", "assault", "robbery", "abuse",
-                          "intruder_detected", "forced_entry", "person_down"}
+        WEAPON_VISUAL  = {"violence", "robbery", "intrusion_detected", "person_down"}
         if a_label in WEAPON_AUDIO and v_label in WEAPON_VISUAL:
             v_label = "weapon_detected"
             v_conf  = max(v_conf, 0.75)
@@ -225,13 +221,11 @@ class FusionEngine:
         if alert:
             high = [
                 "weapon_detected", "person_down", "explosion", "robbery",
-                "forced_entry", "assault", "abuse", "gunshot", "scream",
-                "fight_sounds",
+                "intrusion_detected", "violence", "gunshot", "distress_sounds",
+                "fight_sounds", "forced_entry", "impact",
             ]
             medium = [
-                "intruder_detected", "vehicle_intrusion", "fighting",
-                "suspicious_package", "glass_break",
-                "crying_distress", "car_crash",
+                "vehicle_intrusion", "suspicious_package",
             ]
 
             if a_label in high or v_label in high:

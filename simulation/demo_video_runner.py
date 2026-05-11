@@ -126,9 +126,8 @@ def best_visual_in_chunk(
     """
     SEVERITY_RANK = {"high": 3, "medium": 2, "low": 1, "": 0}
     HIGH = {"weapon_detected", "person_down", "explosion", "robbery",
-            "forced_entry", "assault", "abuse"}
-    MEDIUM = {"intruder_detected", "vehicle_intrusion", "fighting",
-              "suspicious_package", "glass_break", "crying_distress", "car_crash"}
+            "intrusion_detected", "violence"}
+    MEDIUM = {"vehicle_intrusion", "suspicious_package", "distress_sounds", "impact"}
 
     def _sev(label):
         if label in HIGH:

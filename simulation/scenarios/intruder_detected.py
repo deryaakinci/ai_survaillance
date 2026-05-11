@@ -4,6 +4,6 @@ def simulate() -> dict:
     return load_scenario(
         name="Intruder detected",
         audio_label="normal",
-        visual_label="intruder_detected",
+        visual_label="intrusion_detected",
         expected_severity="medium",
     )

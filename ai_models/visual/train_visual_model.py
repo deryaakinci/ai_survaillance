@@ -9,16 +9,14 @@ from ultralytics import YOLO
 
 LABELS = [
     "normal",
-    "intruder_detected",
     "weapon_detected",
     "explosion",
     "vehicle_intrusion",
-    "abuse",
-    "fighting",
-    "assault",
+    "violence",
     "robbery",
     "person_down",
-    "forced_entry",
+    "intrusion_detected",
+    "suspicious_package",
 ]
 LABEL_TO_IDX = {label: idx for idx, label in enumerate(LABELS)}
 

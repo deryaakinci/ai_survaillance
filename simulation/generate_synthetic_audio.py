@@ -4,7 +4,7 @@ generate_synthetic_audio.py
 Generate synthetic training data for minority audio classes by applying
 diverse augmentations to existing samples.
 
-For classes with < 20 real samples (fight_sounds: 4, car_crash: 6,
+For classes with < 20 real samples (fight_sounds: 4, impact: 6,
 forced_entry: 12, gunshot: 21), this script creates additional training
 examples using a combination of:
 
@@ -41,14 +41,11 @@ MINORITY_THRESHOLD = 30
 LABELS = [
     "normal",
     "gunshot",
-    "explosion",
-    "scream",
-    "glass_break",
+    "impact",
+    "distress_sounds",
     "forced_entry",
-    "crying_distress",
     "fight_sounds",
     "siren",
-    "car_crash",
 ]
 
 
