@@ -55,14 +55,14 @@ An intelligent audio-visual fusion surveillance platform that detects security t
 
 **Audio threat classes:** `gunshot`, `explosion`, `scream`, `glass_break`, `forced_entry`, `crying_distress`, `fight_sounds`, `siren`, `car_crash`, `threatening_voice`
 
-**Visual threat classes:** `intruder_detected`, `weapon_detected`, `explosion`, `vehicle_intrusion`, `abuse`, `fighting`, `assault`, `robbery`, `person_down`, `forced_entry`
+**Visual threat classes:** `intruder_detected`, `weapon_detected`, `explosion`, `car_crash`, `abuse`, `fighting`, `assault`, `robbery`, `person_down`, `forced_entry`
 
 **Severity levels:**
 
 | Level | Example triggers |
 |---|---|
 | High | weapon detected, gunshot, explosion, assault, abuse, person down |
-| Medium | intruder, vehicle intrusion, glass break, car crash |
+| Medium | intruder, car crash, glass break |
 | Low | siren, suspicious package |
 
 ### Fusion Logic
@@ -241,6 +241,6 @@ flutter run
 
 The runner exercises 20+ scenarios covering the full threat taxonomy:
 
-`normal` · `gunshot` · `explosion` · `scream` · `glass_break` · `crying_distress` · `fight_sounds` · `siren` · `car_crash` · `threatening_voice` · `intruder_detected` · `weapon_detected` · `visual_explosion` · `vehicle_intrusion` · `abuse` · `fighting` · `assault` · `robbery` · `person_down` · `forced_entry` · `suspicious_package`
+`normal` · `gunshot` · `explosion` · `scream` · `glass_break` · `crying_distress` · `fight_sounds` · `siren` · `car_crash` · `threatening_voice` · `intruder_detected` · `weapon_detected` · `visual_explosion` · `car_crash` · `abuse` · `fighting` · `assault` · `robbery` · `person_down` · `forced_entry` · `suspicious_package`
 
 Each scenario loads matching audio and video samples from the dataset, runs them through both models, fuses the results, and validates the output severity against the expected value.

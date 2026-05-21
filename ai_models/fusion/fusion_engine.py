@@ -111,11 +111,11 @@ class FusionEngine:
     # considered unreliable and gets overridden.
     AUDIO_VISUAL_COMPAT = {
         "gunshot":        {"weapon_detected", "robbery", "violence", "person_down"},
-        "impact":         {"explosion", "person_down", "vehicle_intrusion"},
+        "impact":         {"explosion", "person_down", "car_crash"},
         "distress_sounds": {"violence", "robbery", "person_down", "intrusion_detected"},
         "forced_entry":   {"intrusion_detected", "robbery"},
         "fight_sounds":   {"violence", "person_down", "robbery"},
-        "siren":          {"vehicle_intrusion", "person_down", "explosion"},
+        "siren":          {"car_crash", "person_down", "explosion"},
     }
 
     # Minimum confidence to consider a prediction real
@@ -171,7 +171,7 @@ class FusionEngine:
         # ── Re-check audio confidence after cross-modal override ──────────
         # The cross-modal penalty (×0.3) can push audio confidence below the
         # minimum threshold. Re-check so heavily-penalized overrides don't
-        # generate spurious alerts (e.g. forced_entry → vehicle_intrusion at 0.22).
+        # generate spurious alerts (e.g. forced_entry → car_crash at 0.22).
         if a_label != "normal" and a_conf < self.MIN_AUDIO_CONFIDENCE:
             a_label = "normal"
             a_conf = 1.0 - a_conf
@@ -182,21 +182,28 @@ class FusionEngine:
         # the visual classification is almost certainly a false positive
         # (e.g. news/weather footage, busy backgrounds). Genuine threats
         # either trigger audio confirmation or produce high visual confidence.
-        if (v_label != "normal" and v_conf < 0.40
+        if (v_label != "normal" and v_conf < 0.55
                 and a_label == "normal" and a_conf >= 0.30):
             v_label = "normal"
             v_conf = 1.0 - v_conf
 
         # ── Weapon upgrade ─────────────────────────────────────────────
         # Base YOLO cannot detect firearms; the ResNet18 rarely outputs
-        # weapon_detected for real videos. Best proxy: if the microphone
-        # hears a gunshot while the camera sees a violent scene, the most
-        # likely explanation is that weapons are present.
-        WEAPON_AUDIO   = {"gunshot", "fight_sounds"}
+        # weapon_detected for real videos.  Best proxy: if the microphone
+        # hears weapon-related sounds while the camera sees a violent scene
+        # OR the camera can't classify the scene at all, the most likely
+        # explanation is that weapons are present.
+        WEAPON_AUDIO   = {"gunshot", "fight_sounds", "distress_sounds"}
         WEAPON_VISUAL  = {"violence", "robbery", "intrusion_detected", "person_down"}
         if a_label in WEAPON_AUDIO and v_label in WEAPON_VISUAL:
             v_label = "weapon_detected"
             v_conf  = max(v_conf, 0.75)
+        elif a_label in WEAPON_AUDIO and v_label == "normal":
+            # Audio hears clear threat but visual can't classify the scene
+            # (neither model can identify firearms).  Infer weapon presence
+            # from audio with moderate confidence.
+            v_label = "weapon_detected"
+            v_conf  = round(a_conf * 0.80, 3)
 
         # When only one modality fires, trust it as-is (no conflict to resolve)
 
@@ -225,7 +232,7 @@ class FusionEngine:
                 "fight_sounds", "forced_entry", "impact",
             ]
             medium = [
-                "vehicle_intrusion", "suspicious_package",
+                "car_crash", "suspicious_package",
             ]
 
             if a_label in high or v_label in high:

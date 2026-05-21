@@ -18,6 +18,7 @@ Usage (from project root):
 """
 
 import os
+import shutil
 import cv2
 import json
 import torch
@@ -35,13 +36,15 @@ LABELS = [
     "normal",
     "weapon_detected",
     "explosion",
-    "vehicle_intrusion",
+    "car_crash",
     "violence",
     "robbery",
     "person_down",
     "intrusion_detected",
     "suspicious_package",
 ]
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff", ".tif"}
 NUM_CLASSES = len(LABELS)
 LABEL_TO_IDX = {label: idx for idx, label in enumerate(LABELS)}
 IDX_TO_LABEL = {idx: label for idx, label in enumerate(LABELS)}
@@ -112,6 +115,11 @@ def extract_frames(
 
     print("\n📸 Extracting frames from videos...")
     print("-" * 50)
+
+    # Clean stale frames from previous runs to prevent label corruption
+    if os.path.exists(output_path):
+        print("Removing stale frames from previous training run...")
+        shutil.rmtree(output_path)
 
     os.makedirs(output_path, exist_ok=True)
 
@@ -188,6 +196,60 @@ def extract_frames(
     return all_samples
 
 
+def collect_images(images_path="simulation/datasets/image", max_per_class=300):
+    """Collect static images from an images dataset directory.
+
+    Drop images into simulation/datasets/image/<label>/ and they will be
+    mixed with the video-extracted frames during training automatically.
+
+    Images are capped at max_per_class per label to prevent domain-
+    mismatched datasets (e.g. Roboflow exports) from overwhelming the
+    video-derived training data.
+    """
+    if not os.path.exists(images_path):
+        return []
+
+    print("\n🖼  Collecting static images...")
+    print(f"   (capped at {max_per_class} per class)")
+    print("-" * 50)
+
+    all_samples = []
+
+    for label in LABELS:
+        folder = os.path.join(images_path, label)
+        if not os.path.exists(folder):
+            continue
+
+        images = [
+            p for p in Path(folder).iterdir()
+            if p.suffix.lower() in IMAGE_EXTENSIONS
+        ]
+        if not images:
+            continue
+
+        # Cap to prevent one class from dominating
+        if len(images) > max_per_class:
+            np.random.shuffle(images)
+            images = images[:max_per_class]
+
+        label_idx = LABEL_TO_IDX[label]
+        for img_path in sorted(images):
+            all_samples.append({
+                "path": str(img_path),
+                "label_idx": label_idx,
+                "label": label,
+            })
+
+        print(f"✓ {label:<25} {len(images)} images")
+
+    if all_samples:
+        print(f"\nTotal static images: {len(all_samples)}")
+    else:
+        print("No images found (folder missing or empty — skipping)")
+
+    return all_samples
+
+
 # ──────────────────────────────────────────────
 #  Model builder
 # ──────────────────────────────────────────────
@@ -225,10 +287,11 @@ def unfreeze_backbone(model):
 
 def train(
     source_path="simulation/datasets/video",
+    images_path="simulation/datasets/image",
     frames_path="ai_models/visual/classifier_frames",
     save_path="ai_models/visual/saved_model",
-    total_epochs=60,
-    unfreeze_epoch=10,
+    total_epochs=40,
+    unfreeze_epoch=15,
     batch_size=32,
     lr_head=0.001,
     lr_finetune=0.0001,
@@ -244,10 +307,15 @@ def train(
     )
     print(f"\nUsing device: {device}")
 
-    # ── Extract frames ─────────────────────────────────────────────
+    # ── Extract frames from videos + collect static images ────────
+    # Static images are capped at 300 per class to prevent Roboflow-
+    # sourced images from overwhelming the video-derived training data.
     all_samples = extract_frames(source_path, frames_path)
+    all_samples += collect_images(images_path, max_per_class=300)
+
     if not all_samples:
-        print("\nNo frames extracted — add videos to simulation/datasets/video/")
+        print("\nNo training data found — add videos to simulation/datasets/video/")
+        print("or images to simulation/datasets/image/<label>/")
         return
 
     # ── Stratified train/val split ─────────────────────────────────

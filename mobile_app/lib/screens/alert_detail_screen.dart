@@ -28,6 +28,18 @@ class AlertDetailScreen extends StatelessWidget {
     }
   }
 
+  static String _fmt(String label) => label
+      .replaceAll('_', ' ')
+      .split(' ')
+      .map((w) => w.isEmpty ? w : w[0].toUpperCase() + w.substring(1))
+      .join(' ');
+
+  String get _primaryLabel {
+    if (alert.visualLabel != 'normal') return _fmt(alert.visualLabel);
+    if (alert.audioLabel != 'normal') return _fmt(alert.audioLabel);
+    return 'Normal activity';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -141,7 +153,7 @@ class AlertDetailScreen extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            alert.audioLabel,
+                            _primaryLabel,
                             style: const TextStyle(
                               fontSize: 15,
                               fontWeight: FontWeight.w600,
@@ -160,10 +172,10 @@ class AlertDetailScreen extends StatelessWidget {
                             color: Color(0xFF1A1A1A),
                             height: 24,
                           ),
-                          _detailRow('Sound type', alert.audioLabel,
+                          _detailRow('Sound type', _fmt(alert.audioLabel),
                               const Color(0xFF7F77DD)),
                           const SizedBox(height: 8),
-                          _detailRow('Activity', alert.visualLabel,
+                          _detailRow('Activity', _fmt(alert.visualLabel),
                               const Color(0xFF1D9E75)),
                           const SizedBox(height: 8),
                           _detailRow('Location', alert.zone,

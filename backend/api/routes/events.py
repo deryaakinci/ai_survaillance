@@ -90,7 +90,7 @@ def list_events(
             "alert_fired": e.alert_fired,
             "severity": e.severity or "low",
             "zone": e.zone,
-            "timestamp": e.timestamp.isoformat() if e.timestamp else None,
+            "timestamp": (e.timestamp.isoformat() + "Z") if e.timestamp else None,
         }
         for e in events
     ]
@@ -233,8 +233,8 @@ async def demo_broadcast_event(
                         "severity": severity,
                         "zone": zone,
                         "snapshot_url": snapshot_url,
-                        "timestamp": alert.timestamp.isoformat(),
-                        "title": _get_title(audio_label, severity),
+                        "timestamp": alert.timestamp.isoformat() + "Z",
+                        "title": _get_title(audio_label, severity, visual_label),
                         "body": f"{audio_label.replace('_', ' ').title()} · {visual_label.replace('_', ' ').title()} · {zone}",
                     })
 

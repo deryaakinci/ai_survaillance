@@ -7,6 +7,7 @@ from pathlib import Path
 
 AUDIO_DATASET_PATH = "simulation/datasets/audio"
 VIDEO_DATASET_PATH = "simulation/datasets/video"
+IMAGE_DATASET_PATH = "simulation/datasets/image"
 
 
 def load_scenario(
@@ -41,25 +42,36 @@ def _load_audio(label: str):
 
 
 def _load_visual(label: str) -> dict:
-    folder = os.path.join(VIDEO_DATASET_PATH, label)
-    files = []
-    if os.path.exists(folder):
+    # Try video folder first
+    video_folder = os.path.join(VIDEO_DATASET_PATH, label)
+    video_files = []
+    if os.path.exists(video_folder):
         for ext in ["*.mp4", "*.avi", "*.mov"]:
-            files.extend(list(Path(folder).glob(ext)))
+            video_files.extend(list(Path(video_folder).glob(ext)))
 
-    if not files:
-        print(f"  [scenario] No video files for '{label}' — using blank frame")
-        return {"frame": np.zeros((480, 640, 3), dtype=np.uint8)}
+    if video_files:
+        video_path = video_files[np.random.randint(len(video_files))]
+        cap = cv2.VideoCapture(str(video_path))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        target_frame = np.random.randint(max(1, total_frames))
+        cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+        ret, frame = cap.read()
+        cap.release()
+        if ret:
+            return {"frame": frame}
 
-    video_path = files[np.random.randint(len(files))]
-    cap = cv2.VideoCapture(str(video_path))
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    target_frame = np.random.randint(max(1, total_frames))
-    cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
-    ret, frame = cap.read()
-    cap.release()
+    # Fall back to image folder
+    image_folder = os.path.join(IMAGE_DATASET_PATH, label)
+    image_files = []
+    if os.path.exists(image_folder):
+        for ext in ["*.jpg", "*.jpeg", "*.png", "*.bmp", "*.webp"]:
+            image_files.extend(list(Path(image_folder).glob(ext)))
 
-    if not ret:
-        return {"frame": np.zeros((480, 640, 3), dtype=np.uint8)}
+    if image_files:
+        img_path = image_files[np.random.randint(len(image_files))]
+        frame = cv2.imread(str(img_path))
+        if frame is not None:
+            return {"frame": frame}
 
-    return {"frame": frame}
+    print(f"  [scenario] No data for '{label}' — using blank frame")
+    return {"frame": np.zeros((480, 640, 3), dtype=np.uint8)}

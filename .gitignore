@@ -1,7 +1,8 @@
 # --- AI DATASETS (Crucial to ignore) ---
-# This ignores everything inside your audio and video folders
+# This ignores everything inside your audio, video and image folders
 simulation/datasets/audio/
 simulation/datasets/video/
+simulation/datasets/image/
 
 # Backup: Ignore all media formats anywhere in the project
 *.mp4

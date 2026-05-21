@@ -25,7 +25,7 @@ class AlertModel {
         visualLabel: json['visual_label'],
         zone: json['zone'] ?? 'Zone 1',
         severity: json['severity'] ?? 'medium',
-        timestamp: DateTime.parse(json['timestamp']),
+        timestamp: DateTime.parse(json['timestamp']).toLocal(),
         snapshotUrl: json['snapshot_url'],
         audioClipUrl: json['audio_clip_url'],
       );

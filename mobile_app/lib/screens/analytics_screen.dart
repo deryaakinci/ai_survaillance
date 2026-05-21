@@ -155,16 +155,38 @@ class AnalyticsScreen extends StatelessWidget {
     );
   }
 
+  static String _fmt(String label) => label
+      .replaceAll('_', ' ')
+      .split(' ')
+      .map((w) => w.isEmpty ? w : w[0].toUpperCase() + w.substring(1))
+      .join(' ');
+
+  static const _labelColors = {
+    'gunshot':            Color(0xFF7F77DD),
+    'impact':             Color(0xFFE24B4A),
+    'distress_sounds':    Color(0xFFEF9F27),
+    'forced_entry':       Color(0xFF1D9E75),
+    'fight_sounds':       Color(0xFF85B7EB),
+    'siren':              Color(0xFFD85A30),
+    'weapon_detected':    Color(0xFFE24B4A),
+    'explosion':          Color(0xFFD85A30),
+    'car_crash':  Color(0xFF85B7EB),
+    'violence':           Color(0xFF7F77DD),
+    'robbery':            Color(0xFF5DCAA5),
+    'person_down':        Color(0xFFEF9F27),
+    'intrusion_detected': Color(0xFF1D9E75),
+    'suspicious_package': Color(0xFF5DCAA5),
+  };
+
+  static const _fallbackColors = [
+    Color(0xFF7F77DD), Color(0xFFE24B4A), Color(0xFFEF9F27),
+    Color(0xFF1D9E75), Color(0xFF85B7EB), Color(0xFFD85A30),
+    Color(0xFF5DCAA5),
+  ];
+
   Widget _breakdownCard(AlertProvider provider) {
-    final types = [
-      {'label': 'Gunshot', 'color': const Color(0xFF7F77DD), 'key': 'gunshot'},
-      {'label': 'Explosion', 'color': const Color(0xFFE24B4A), 'key': 'explosion'},
-      {'label': 'Scream', 'color': const Color(0xFFEF9F27), 'key': 'scream'},
-      {'label': 'Forced entry', 'color': const Color(0xFF1D9E75), 'key': 'forced_entry'},
-      {'label': 'Glass break', 'color': const Color(0xFF85B7EB), 'key': 'glass_break'},
-      {'label': 'Fight', 'color': const Color(0xFFD85A30), 'key': 'fight'},
-      {'label': 'Weapon', 'color': const Color(0xFF5DCAA5), 'key': 'weapon'},
-    ];
+    final entries = provider.alertTypes.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
     final total = provider.totalAlerts;
 
     return Container(
@@ -183,48 +205,62 @@ class AnalyticsScreen extends StatelessWidget {
             style: TextStyle(fontSize: 10, color: Color(0xFF555555)),
           ),
           const SizedBox(height: 10),
-          ...types.map((t) {
-            final count = provider.countByType(t['key'] as String);
-            final pct = total > 0 ? count / total : 0.0;
-            final color = t['color'] as Color;
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: Column(
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        t['label'] as String,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: Color(0xFFAAAAAA),
-                        ),
-                      ),
-                      Text(
-                        count.toString(),
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: color,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(
-                      value: pct,
-                      backgroundColor: color.withValues(alpha: 0.1),
-                      valueColor: AlwaysStoppedAnimation<Color>(color),
-                      minHeight: 5,
-                    ),
-                  ),
-                ],
+          if (entries.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: Center(
+                child: Text(
+                  'No alert data yet',
+                  style: TextStyle(fontSize: 12, color: Color(0xFF444444)),
+                ),
               ),
-            );
-          }),
+            )
+          else
+            ...entries.asMap().entries.map((e) {
+              final i = e.key;
+              final key = e.value.key;
+              final count = e.value.value;
+              final pct = total > 0 ? count / total : 0.0;
+              final color = _labelColors[key] ??
+                  _fallbackColors[i % _fallbackColors.length];
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          _fmt(key),
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Color(0xFFAAAAAA),
+                          ),
+                        ),
+                        Text(
+                          count.toString(),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: color,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: pct,
+                        backgroundColor: color.withValues(alpha: 0.1),
+                        valueColor: AlwaysStoppedAnimation<Color>(color),
+                        minHeight: 5,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
         ],
       ),
     );

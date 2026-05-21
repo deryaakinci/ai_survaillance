@@ -1,4 +1,5 @@
 import os
+import shutil
 import cv2
 import yaml
 import torch
@@ -11,7 +12,7 @@ LABELS = [
     "normal",
     "weapon_detected",
     "explosion",
-    "vehicle_intrusion",
+    "car_crash",
     "violence",
     "robbery",
     "person_down",
@@ -29,12 +30,21 @@ def get_device() -> str:
     return "cpu"
 
 
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+
+
 def prepare_yolo_dataset(
     source_path="simulation/datasets/video",
+    image_path="simulation/datasets/image",
     output_path="ai_models/visual/yolo_dataset",
 ):
     print("\nPreparing YOLO dataset...")
     print("-" * 40)
+
+    # ── Clean stale data from previous runs ────────────────────────
+    if os.path.exists(output_path):
+        print("Removing stale dataset from previous training run...")
+        shutil.rmtree(output_path)
 
     for split in ["train", "val"]:
         os.makedirs(f"{output_path}/images/{split}", exist_ok=True)
@@ -42,7 +52,8 @@ def prepare_yolo_dataset(
 
     all_frames = []
 
-    print("\nCalculating class video distribution for balanced sampling...")
+    # ── Video frames ───────────────────────────────────────────────
+    print("\nExtracting frames from videos...")
     class_videos = {}
     for label in LABELS:
         folder = os.path.join(source_path, label)
@@ -53,92 +64,116 @@ def prepare_yolo_dataset(
             if videos:
                 class_videos[label] = videos
 
-    if not class_videos:
-        print("No video files found!")
-        return None
+    if class_videos:
+        max_videos = max(len(v) for v in class_videos.values())
+        target_frames_per_class = max_videos * 5
 
-    # Calculate target frames to balance classes
-    # We aim for ~5 frames per video for the largest class, and scale up for minority classes
-    max_videos = max(len(v) for v in class_videos.values())
-    target_frames_per_class = max_videos * 5
-    
-    print(f"\nBalancing dataset: Targeting ~{target_frames_per_class} frames per class")
-    print("-" * 40)
+        print(f"Targeting ~{target_frames_per_class} frames per video class")
+        print("-" * 40)
 
-    for label in LABELS:
-        if label not in class_videos:
-            print(f"⚠ Skipping {label} — no video files")
-            continue
-
-        video_files = class_videos[label]
-        label_idx = LABEL_TO_IDX[label]
-        frame_count = 0
-        
-        # Calculate how many frames to extract per video to hit the target
-        frames_per_video = max(1, int(np.ceil(target_frames_per_class / len(video_files))))
-
-        for video_path in video_files:
-            cap = cv2.VideoCapture(str(video_path))
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            
-            if total_frames <= 0:
-                cap.release()
+        for label in LABELS:
+            if label not in class_videos:
                 continue
-                
-            # Extract balanced number of frames (don't exceed total frames in the video)
-            num_to_extract = min(frames_per_video, total_frames)
-            frame_indices = np.linspace(0, total_frames - 1, num_to_extract, dtype=int)
 
-            for idx in frame_indices:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-                ret, frame = cap.read()
-                if not ret:
+            video_files = class_videos[label]
+            label_idx = LABEL_TO_IDX[label]
+            frame_count = 0
+            frames_per_video = max(1, int(np.ceil(target_frames_per_class / len(video_files))))
+
+            for video_path in video_files:
+                cap = cv2.VideoCapture(str(video_path))
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                if total_frames <= 0:
+                    cap.release()
                     continue
 
-                frame_name = f"{label}_{video_path.stem}_frame{idx}"
-                all_frames.append({
-                    "frame": frame,
-                    "name": frame_name,
-                    "label_idx": label_idx,
-                    "label": label,
-                })
-                frame_count += 1
+                num_to_extract = min(frames_per_video, total_frames)
+                frame_indices = np.linspace(0, total_frames - 1, num_to_extract, dtype=int)
 
-            cap.release()
+                for idx in frame_indices:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                    ret, frame = cap.read()
+                    if not ret:
+                        continue
 
-        print(f"✓ {label:<25} {frame_count} frames extracted (from {len(video_files)} videos)")
+                    frame_name = f"{label}_{video_path.stem}_frame{idx}"
+                    all_frames.append({
+                        "frame": frame,
+                        "name": frame_name,
+                        "label_idx": label_idx,
+                        "label": label,
+                        "source": "video",
+                    })
+                    frame_count += 1
 
-    print(f"\nTotal frames: {len(all_frames)}")
-    
-    # ── Class-weighted tracking to show distribution ──
-    print(f"\nClass distribution (balanced frames):")
-    label_counts = {}
-    for item in all_frames:
-        l = item['label']
-        label_counts[l] = label_counts.get(l, 0) + 1
-    for label in LABELS:
-        if label in label_counts:
-            print(f"  {label:<25} {label_counts[label]:>5} frames")
+                cap.release()
+
+            print(f"✓ {label:<25} {frame_count} frames (from {len(video_files)} videos)")
+    else:
+        print("No video files found — using images only")
+
+    # ── Static images (DISABLED) ────────────────────────────────────
+    # Roboflow-exported images have a different visual domain than
+    # surveillance video frames and corrupt the model when mixed in.
+    # To re-enable, uncomment the block below.
+    # print("\nCollecting static images...")
+    # print("-" * 40)
+    # image_count_total = 0
+    # for label in LABELS:
+    #     folder = os.path.join(image_path, label)
+    #     if not os.path.exists(folder):
+    #         continue
+    #     images = [p for p in Path(folder).iterdir() if p.suffix.lower() in IMAGE_EXTENSIONS]
+    #     if not images:
+    #         continue
+    #     label_idx = LABEL_TO_IDX[label]
+    #     for img_path in images:
+    #         all_frames.append({
+    #             "img_path": str(img_path),
+    #             "name": f"{label}_{img_path.stem}",
+    #             "label_idx": label_idx,
+    #             "label": label,
+    #             "source": "image",
+    #         })
+    #     print(f"✓ {label:<25} {len(images)} images")
+    #     image_count_total += len(images)
+    # if image_count_total == 0:
+    #     print("No static images found")
 
     if len(all_frames) == 0:
-        print("No frames extracted! Add videos to dataset folders.")
+        print("No training data found!")
         return None
+
+    # ── Class distribution summary ─────────────────────────────────
+    print(f"\nTotal samples: {len(all_frames)}")
+    print("Class distribution:")
+    label_counts = {}
+    for item in all_frames:
+        label_counts[item["label"]] = label_counts.get(item["label"], 0) + 1
+    for label in LABELS:
+        if label in label_counts:
+            print(f"  {label:<25} {label_counts[label]:>5}")
 
     np.random.shuffle(all_frames)
     split_idx = int(len(all_frames) * 0.8)
     train_frames = all_frames[:split_idx]
     val_frames = all_frames[split_idx:]
 
-    print(f"Train frames : {len(train_frames)}")
-    print(f"Val frames   : {len(val_frames)}")
+    print(f"\nTrain : {len(train_frames)}  |  Val : {len(val_frames)}")
 
     for split, frames in [("train", train_frames), ("val", val_frames)]:
         for item in frames:
-            img_path = f"{output_path}/images/{split}/{item['name']}.jpg"
-            cv2.imwrite(img_path, item["frame"])
+            dst_img = f"{output_path}/images/{split}/{item['name']}.jpg"
+            dst_lbl = f"{output_path}/labels/{split}/{item['name']}.txt"
 
-            label_path = f"{output_path}/labels/{split}/{item['name']}.txt"
-            with open(label_path, "w") as f:
+            if item["source"] == "video":
+                cv2.imwrite(dst_img, item["frame"])
+            else:
+                img = cv2.imread(item["img_path"])
+                if img is not None:
+                    cv2.imwrite(dst_img, img)
+
+            with open(dst_lbl, "w") as f:
                 f.write(f"{item['label_idx']} 0.5 0.5 1.0 1.0\n")
 
     yaml_content = {
@@ -159,9 +194,10 @@ def prepare_yolo_dataset(
 
 def train(
     source_path="simulation/datasets/video",
+    image_path="simulation/datasets/image",
     output_path="ai_models/visual/yolo_dataset",
     save_path="ai_models/visual/saved_model",
-    epochs=50,
+    epochs=30,
     imgsz=640,
     batch=8,
 ):
@@ -169,21 +205,7 @@ def train(
     print("   YOLOV8 FINE-TUNING FOR SURVEILLANCE")
     print("=" * 55)
 
-    total_videos = 0
-    for label in LABELS:
-        folder = os.path.join(source_path, label)
-        if os.path.exists(folder):
-            for ext in ["*.mp4", "*.avi", "*.mov"]:
-                total_videos += len(list(Path(folder).glob(ext)))
-
-    if total_videos == 0:
-        print("\nNo video files found!")
-        print("Add videos to simulation/datasets/video/ folders first.")
-        return
-
-    print(f"\nFound {total_videos} video files across all classes")
-
-    yaml_path = prepare_yolo_dataset(source_path, output_path)
+    yaml_path = prepare_yolo_dataset(source_path, image_path, output_path)
     if yaml_path is None:
         return
 
@@ -222,6 +244,7 @@ def train(
 
 def evaluate(
     source_path="simulation/datasets/video",
+    image_path="simulation/datasets/image",
     save_path="ai_models/visual/saved_model",
 ):
     model_path = f"{save_path}/surveillance_model/weights/best.pt"
@@ -237,27 +260,34 @@ def evaluate(
     total = 0
 
     for label in LABELS:
-        folder = os.path.join(source_path, label)
-        if not os.path.exists(folder):
-            continue
+        frame = None
 
-        video_files = list(Path(folder).glob("*.mp4"))
-        if not video_files:
-            continue
+        # Try video first
+        video_folder = os.path.join(source_path, label)
+        if os.path.exists(video_folder):
+            video_files = list(Path(video_folder).glob("*.mp4"))
+            if video_files:
+                cap = cv2.VideoCapture(str(video_files[0]))
+                ret, frame = cap.read()
+                cap.release()
+                if not ret:
+                    frame = None
 
-        cap = cv2.VideoCapture(str(video_files[0]))
-        ret, frame = cap.read()
-        cap.release()
+        # Fall back to image
+        if frame is None:
+            img_folder = os.path.join(image_path, label)
+            if os.path.exists(img_folder):
+                imgs = [p for p in Path(img_folder).iterdir() if p.suffix.lower() in IMAGE_EXTENSIONS]
+                if imgs:
+                    frame = cv2.imread(str(imgs[0]))
 
-        if not ret:
+        if frame is None:
             continue
 
         results = model(frame, verbose=False)
         if results and results[0].boxes:
             pred_idx = int(results[0].boxes.cls[0])
-            predicted = (
-                LABELS[pred_idx] if pred_idx < len(LABELS) else "unknown"
-            )
+            predicted = LABELS[pred_idx] if pred_idx < len(LABELS) else "unknown"
         else:
             predicted = "normal"
 

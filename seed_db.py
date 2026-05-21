@@ -45,7 +45,7 @@ def seed_data():
             ("impact", "explosion", "high"),
             ("fight_sounds", "violence", "high"),
             ("forced_entry", "intrusion_detected", "high"),
-            ("siren", "vehicle_intrusion", "medium"),
+            ("siren", "car_crash", "medium"),
         ]
         
         zones = ["Front Door", "Backyard", "Garage", "Living Room"]

@@ -5,8 +5,14 @@ import 'package:intl/intl.dart';
 class AlertCard extends StatelessWidget {
   final AlertModel alert;
   final VoidCallback? onTap;
+  final bool showSnapshot;
 
-  const AlertCard({super.key, required this.alert, this.onTap});
+  const AlertCard({
+    super.key,
+    required this.alert,
+    this.onTap,
+    this.showSnapshot = false,
+  });
 
   Color get _severityColor {
     switch (alert.severity) {
@@ -39,6 +45,25 @@ class AlertCard extends StatelessWidget {
       default:
         return Icons.check_circle_outline;
     }
+  }
+
+  static String _fmt(String label) => label
+      .replaceAll('_', ' ')
+      .split(' ')
+      .map((w) => w.isEmpty ? w : w[0].toUpperCase() + w.substring(1))
+      .join(' ');
+
+  String get _primaryLabel {
+    if (alert.visualLabel != 'normal') return _fmt(alert.visualLabel);
+    if (alert.audioLabel != 'normal') return _fmt(alert.audioLabel);
+    return 'Normal activity';
+  }
+
+  String get _secondaryLine {
+    final a = alert.audioLabel != 'normal' ? _fmt(alert.audioLabel) : null;
+    final v = alert.visualLabel != 'normal' ? _fmt(alert.visualLabel) : null;
+    if (a != null && v != null && a != v) return 'Audio: $a · Visual: $v';
+    return '';
   }
 
   String get _timeAgo {
@@ -101,7 +126,7 @@ class AlertCard extends StatelessWidget {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Text(
-                              alert.audioLabel,
+                              _primaryLabel,
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
@@ -112,6 +137,19 @@ class AlertCard extends StatelessWidget {
                               ),
                             ),
                             const SizedBox(height: 4),
+                            if (_secondaryLine.isNotEmpty) ...[
+                              Text(
+                                _secondaryLine,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: Color(0xFF666666),
+                                  fontWeight: FontWeight.w400,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                            ],
                             Text(
                               '${alert.zone} · $_timeAgo',
                               style: const TextStyle(
@@ -139,6 +177,22 @@ class AlertCard extends StatelessWidget {
                           ),
                         ),
                       ),
+                      if (showSnapshot) ...[
+                        const SizedBox(width: 10),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: alert.snapshotUrl != null
+                              ? Image.network(
+                                  'http://127.0.0.1:8000${alert.snapshotUrl}',
+                                  width: 52,
+                                  height: 52,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) =>
+                                      _snapshotPlaceholder(),
+                                )
+                              : _snapshotPlaceholder(),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -146,6 +200,22 @@ class AlertCard extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _snapshotPlaceholder() {
+    return Container(
+      width: 52,
+      height: 52,
+      decoration: BoxDecoration(
+        color: _severityColor.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Icon(
+        Icons.videocam_outlined,
+        color: _severityColor.withOpacity(0.4),
+        size: 22,
       ),
     );
   }

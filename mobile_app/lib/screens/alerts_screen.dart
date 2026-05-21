@@ -7,26 +7,27 @@ import 'alert_detail_screen.dart';
 class AlertsScreen extends StatelessWidget {
   const AlertsScreen({super.key});
 
-  /// Map an audio_label to a human-readable alert title.
-  String _alertTitle(String audioLabel) {
-    final titles = {
-      'gunshot': '🚨 Gunshot detected',
-      'explosion': '🚨 Explosion detected',
-      'scream': '⚠️ Scream detected',
-      'glass_break': '⚠️ Glass break detected',
-      'forced_entry': '🚨 Forced entry detected',
-      'crying_distress': '⚠️ Distress detected',
-      'fight_sounds': '⚠️ Fight detected',
-      'siren': '⚠️ Emergency siren nearby',
-      'car_crash': '🚨 Car crash detected',
-      'weapon': '🚨 Weapon detected',
-      'fight': '⚠️ Fight detected',
-      'assault': '🚨 Assault detected',
-      'robbery': '🚨 Robbery detected',
-      'abuse': '⚠️ Abuse detected',
+  String _primaryKey(AlertModel a) =>
+      a.visualLabel != 'normal' ? a.visualLabel : a.audioLabel;
+
+  String _alertTitle(String label) {
+    const titles = {
+      'gunshot':            '🚨 Gunshot detected',
+      'impact':             '🚨 Impact detected',
+      'distress_sounds':    '⚠️ Distress sounds detected',
+      'forced_entry':       '🚨 Forced entry detected',
+      'fight_sounds':       '⚠️ Fight detected',
+      'siren':              '⚠️ Emergency siren nearby',
+      'weapon_detected':    '🚨 Weapon detected',
+      'explosion':          '🚨 Explosion detected',
+      'car_crash':  '⚠️ Car crash',
+      'violence':           '🚨 Violence detected',
+      'robbery':            '🚨 Robbery in progress',
+      'person_down':        '🚨 Person down',
+      'intrusion_detected': '🚨 Intrusion detected',
+      'suspicious_package': '⚠️ Suspicious package',
     };
-    return titles[audioLabel] ??
-        '⚠️ ${audioLabel.replaceAll('_', ' ')}';
+    return titles[label] ?? '⚠️ ${label.replaceAll('_', ' ')}';
   }
 
   Color _severityColor(String severity) {
@@ -78,11 +79,11 @@ class AlertsScreen extends StatelessWidget {
                     );
                   }
 
-                  // ── Deduplicate: group by audio_label, keep the latest ──
+                  // ── Deduplicate: one entry per unique threat type ──
                   final Map<String, AlertModel> uniqueAlerts = {};
                   final Map<String, int> alertCounts = {};
                   for (final alert in provider.alerts) {
-                    final key = alert.audioLabel;
+                    final key = _primaryKey(alert);
                     alertCounts[key] = (alertCounts[key] ?? 0) + 1;
                     if (!uniqueAlerts.containsKey(key)) {
                       uniqueAlerts[key] = alert;
@@ -94,7 +95,7 @@ class AlertsScreen extends StatelessWidget {
                     itemCount: deduped.length,
                     itemBuilder: (ctx, i) {
                       final alert = deduped[i];
-                      final count = alertCounts[alert.audioLabel] ?? 1;
+                      final count = alertCounts[_primaryKey(alert)] ?? 1;
                       final color = _severityColor(alert.severity);
 
                       return GestureDetector(
@@ -129,7 +130,7 @@ class AlertsScreen extends StatelessWidget {
                               // Alert name only
                               Expanded(
                                 child: Text(
-                                  _alertTitle(alert.audioLabel),
+                                  _alertTitle(_primaryKey(alert)),
                                   style: const TextStyle(
                                     fontSize: 15,
                                     fontWeight: FontWeight.w600,

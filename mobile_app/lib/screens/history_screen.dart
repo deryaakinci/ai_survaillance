@@ -56,6 +56,7 @@ class HistoryScreen extends StatelessWidget {
                     itemCount: provider.alerts.length,
                     itemBuilder: (ctx, i) => AlertCard(
                       alert: provider.alerts[i],
+                      showSnapshot: true,
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(

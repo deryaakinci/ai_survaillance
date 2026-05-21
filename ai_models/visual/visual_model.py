@@ -11,7 +11,7 @@ LABELS = [
     "normal",
     "weapon_detected",
     "explosion",
-    "vehicle_intrusion",
+    "car_crash",
     "violence",
     "robbery",
     "person_down",
@@ -24,7 +24,7 @@ FINETUNED_YOLO_PATH   = "ai_models/visual/saved_model/surveillance_model/weights
 FALLBACK_MODEL_PATH   = "yolov8n.pt"
 
 # Minimum confidence to report an anomaly — below this we say "normal"
-MIN_CONFIDENCE = 0.30
+MIN_CONFIDENCE = 0.45
 
 
 # ── ImageNet normalisation (must match training) ──────────────────────
@@ -83,8 +83,8 @@ class VisualAnomalyDetector:
 
         # ── Load YOLO models ────────────────────────────────────────────
         # Always load base YOLO for COCO weapon detection (knife, scissors,
-        # baseball bat).  Its pretrained weapon knowledge is stronger than
-        # anything our small custom dataset can teach.
+        # baseball bat) as an additional detection layer on top of our
+        # fine-tuned models.
         try:
             from ultralytics import YOLO as _YOLO
             self.yolo_base = _YOLO(FALLBACK_MODEL_PATH)
@@ -99,28 +99,34 @@ class VisualAnomalyDetector:
     # ── Public entry point ────────────────────────────────────────────
 
     def predict(self, frame) -> dict:
-        # ── COCO weapon scan first — highest priority ──────────────
-        weapon_hit = self._run_weapon_scan(frame)
-        if weapon_hit is not None:
-            return weapon_hit
-
-        yolo_result   = self._run_yolo(frame)
+        # ── Step 1: ResNet18 scene classification (primary) ─────────
         resnet_result = self._run_resnet(frame)
 
-        if yolo_result is None and resnet_result is None:
+        # ── Step 2: COCO weapon object scan (supplementary) ─────────
+        # Only fires if base YOLO physically detects a knife/scissors/bat.
+        # If ResNet strongly says "normal", we override — prevents false
+        # positives on benign footage (e.g. weather reports).
+        weapon_hit = self._run_weapon_scan(frame)
+
+        if weapon_hit is not None:
+            r_label = resnet_result["label"] if resnet_result else "normal"
+            r_conf = resnet_result["confidence"] if resnet_result else 0.0
+
+            # Trust COCO if ResNet also sees a threat, or ResNet is unsure
+            if r_label != "normal" or r_conf < 0.60:
+                return weapon_hit
+            # ResNet confidently says normal → ignore COCO false positive
+            # (common with weather graphics, kitchen scenes, etc.)
+
+        # ── Step 3: Return ResNet result ────────────────────────────
+        if resnet_result is None:
             return {"label": "normal", "confidence": 0.0}
-        if yolo_result is None:
-            result = resnet_result
-        elif resnet_result is None:
-            result = yolo_result
-        else:
-            result = self._ensemble(yolo_result, resnet_result)
 
         # If undetermined (low confidence), treat as normal
-        if result["label"] != "normal" and result["confidence"] < MIN_CONFIDENCE:
-            return {"label": "normal", "confidence": round(1.0 - result["confidence"], 3)}
+        if resnet_result["label"] != "normal" and resnet_result["confidence"] < MIN_CONFIDENCE:
+            return {"label": "normal", "confidence": round(1.0 - resnet_result["confidence"], 3)}
 
-        return result
+        return resnet_result
 
     # ── Per-model runners ─────────────────────────────────────────────
 
@@ -176,7 +182,9 @@ class VisualAnomalyDetector:
         top2_label = LABELS[int(top2_idx[0][1])]
 
         if top1_label == "normal":
-            if top2_label != "normal" and top2_conf > 0.25:
+            # Only consider 2nd-best anomaly if the model is genuinely uncertain
+            # (top1 normal confidence is low) AND the anomaly is fairly certain.
+            if top1_conf < 0.45 and top2_label != "normal" and top2_conf > 0.40:
                 return {"label": top2_label, "confidence": round(top2_conf * 0.9, 3)}
             return {"label": "normal", "confidence": round(top1_conf, 3)}
 
@@ -193,38 +201,52 @@ class VisualAnomalyDetector:
         r_label = resnet["label"]
         r_conf  = resnet["confidence"]
 
-        # YOLO has absolute priority on weapons — no consensus needed
+        # YOLO weapon detection — require ResNet agreement or high YOLO confidence
         if y_label == "weapon_detected":
-            return {"label": "weapon_detected", "confidence": round(min(y_conf * 1.1, 0.99), 3)}
+            if r_label == "weapon_detected":
+                return {"label": "weapon_detected", "confidence": round(min(max(y_conf, r_conf) * 1.15, 0.99), 3)}
+            if y_conf >= 0.70:
+                return {"label": "weapon_detected", "confidence": round(y_conf, 3)}
 
         # Both agree → strong confidence boost
         if y_label == r_label:
             return {"label": y_label, "confidence": round(min(max(y_conf, r_conf) * 1.15, 0.99), 3)}
 
-        # Both flag an anomaly but disagree on class → YOLO wins, small penalty
+        # Both flag an anomaly but DISAGREE on class → heavy penalty.
+        # When models disagree, it's usually OOD confusion (e.g. weather
+        # report misclassified).  Real threats make both models agree.
+        # Audio cross-modal fusion handles cases where visual can't
+        # classify the scene but audio detects the threat.
         if y_label != "normal" and r_label != "normal":
-            return {"label": y_label, "confidence": round(max(y_conf, r_conf) * 0.85, 3)}
+            weaker_conf = min(y_conf, r_conf)
+            return {"label": y_label, "confidence": round(weaker_conf * 0.35, 3)}
 
-        # Only YOLO fires → trust it with a small penalty
+        # Only YOLO fires, ResNet says normal → be very skeptical.
+        # The fine-tuned YOLO was trained with full-frame bounding boxes,
+        # so it tends to always output a detection.  ResNet is the proper
+        # scene classifier — trust its "normal" verdict.
         if y_label != "normal":
-            return {"label": y_label, "confidence": round(y_conf * 0.85, 3)}
+            return {"label": "normal", "confidence": round(max(r_conf, 1.0 - y_conf), 3)}
 
-        # Only ResNet18 fires → trust it with a small penalty
+        # Only ResNet18 fires → moderate trust (scene classifier is better
+        # but still prone to OOD mistakes when acting alone).
         if r_label != "normal":
-            return {"label": r_label, "confidence": round(r_conf * 0.85, 3)}
+            if r_conf >= 0.70:
+                return {"label": r_label, "confidence": round(r_conf * 0.75, 3)}
+            return {"label": "normal", "confidence": round(1.0 - r_conf, 3)}
 
         return {"label": "normal", "confidence": round(max(y_conf, r_conf), 3)}
 
     def _predict_finetuned(self, results) -> dict:
         """
         Fine-tuned YOLO model outputs our custom surveillance labels directly.
-        Uses severity-based priority: high-severity labels (e.g. weapon_detected)
-        take precedence even if they have lower confidence than generic detections.
+        High-priority labels only override when they have meaningful confidence
+        (>= 0.50).  Otherwise, prefer the highest-confidence detection.
         """
+        best_label = None
+        best_score = 0.0
         high_prio_label = None
         high_prio_score = 0.0
-        other_label = None
-        other_score = 0.0
 
         for result in results:
             for box in result.boxes:
@@ -238,25 +260,27 @@ class VisualAnomalyDetector:
                 if label == "normal":
                     continue
 
-                if label in self.HIGH_PRIORITY_LABELS:
-                    if confidence > high_prio_score:
-                        high_prio_label = label
-                        high_prio_score = confidence
-                else:
-                    if confidence > other_score:
-                        other_label = label
-                        other_score = confidence
+                # Track best overall detection
+                if confidence > best_score:
+                    best_label = label
+                    best_score = confidence
 
-        # Prefer high-priority detections (even at lower confidence)
-        if high_prio_label is not None:
+                # Track best high-priority detection separately
+                if label in self.HIGH_PRIORITY_LABELS and confidence > high_prio_score:
+                    high_prio_label = label
+                    high_prio_score = confidence
+
+        # High-priority only wins if it has meaningful confidence (>= 0.50)
+        if high_prio_label is not None and high_prio_score >= 0.50:
             return {
                 "label": high_prio_label,
                 "confidence": round(high_prio_score, 3),
             }
-        if other_label is not None:
+        # Otherwise use highest-confidence detection regardless of priority
+        if best_label is not None:
             return {
-                "label": other_label,
-                "confidence": round(other_score, 3),
+                "label": best_label,
+                "confidence": round(best_score, 3),
             }
 
         return {"label": "normal", "confidence": 0.95}
@@ -300,7 +324,7 @@ class VisualAnomalyDetector:
         if has_backpack and person_count == 0:
             return {"label": "suspicious_package", "confidence": 0.83}
         if has_vehicle and person_count == 0:
-            return {"label": "vehicle_intrusion", "confidence": 0.82}
+            return {"label": "car_crash", "confidence": 0.82}
         if person_count >= 1 and self._check_person_down(detections):
             return {"label": "person_down", "confidence": 0.75}
 
@@ -320,8 +344,16 @@ class VisualAnomalyDetector:
                     return True
         return False
 
+    _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff", ".tif"}
+
     def predict_from_file(self, file_path: str) -> dict:
         try:
+            ext = os.path.splitext(file_path)[1].lower()
+            if ext in self._IMAGE_EXTENSIONS:
+                frame = cv2.imread(file_path)
+                if frame is not None:
+                    return self.predict(frame)
+                return {"label": "normal", "confidence": 0.0}
             cap = cv2.VideoCapture(file_path)
             ret, frame = cap.read()
             cap.release()
@@ -337,7 +369,7 @@ class VisualAnomalyDetector:
             "robbery", "intrusion_detected", "violence",
         ]
         medium = [
-            "vehicle_intrusion", "suspicious_package",
+            "car_crash", "suspicious_package",
         ]
         low = []
 

@@ -78,7 +78,7 @@ class VideoDatasetLoader:
             "normal",
             "weapon_detected",
             "explosion",
-            "vehicle_intrusion",
+            "car_crash",
             "violence",
             "robbery",
             "person_down",

@@ -4,6 +4,6 @@ def simulate() -> dict:
     return load_scenario(
         name="Car crash",
         audio_label="impact",
-        visual_label="vehicle_intrusion",
+        visual_label="car_crash",
         expected_severity="medium",
     )

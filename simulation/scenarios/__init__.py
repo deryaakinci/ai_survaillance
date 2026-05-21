@@ -11,7 +11,6 @@ from simulation.scenarios import (
     intruder_detected,
     weapon_detected,
     visual_explosion,
-    vehicle_intrusion,
     abuse,
     fighting,
     assault,

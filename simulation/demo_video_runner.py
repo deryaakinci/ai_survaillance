@@ -120,43 +120,53 @@ def best_visual_in_chunk(
     n_samples: int = 5,
 ) -> dict:
     """
-    Sample n_samples evenly-spaced frames across the chunk and return
-    the most alarming visual result (anomaly > normal, then highest
-    severity, then highest confidence).
+    Sample n_samples evenly-spaced frames across the chunk and use
+    **majority voting** to decide the chunk label.
+
+    An anomaly is only reported if more than half the sampled frames
+    agree on the same anomaly class.  This prevents single-frame
+    false positives on out-of-distribution content (e.g. weather
+    reports, news broadcasts).
+
+    Exception: weapon_detected is always trusted if *any* frame
+    reports it, because missing a weapon is far worse than a false
+    positive.
     """
-    SEVERITY_RANK = {"high": 3, "medium": 2, "low": 1, "": 0}
-    HIGH = {"weapon_detected", "person_down", "explosion", "robbery",
-            "intrusion_detected", "violence"}
-    MEDIUM = {"vehicle_intrusion", "suspicious_package", "distress_sounds", "impact"}
+    from collections import Counter
 
-    def _sev(label):
-        if label in HIGH:
-            return "high"
-        if label in MEDIUM:
-            return "medium"
-        if label != "normal":
-            return "low"
-        return ""
-
-    best_result = {"label": "normal", "confidence": 0.0}
-    best_rank   = (-1, 0.0)   # (severity_rank, confidence)
-
+    results = []
     step = (chunk_end - chunk_start) / max(n_samples - 1, 1)
     for i in range(n_samples):
         t = chunk_start + i * step
         frame = sample_frame(video_path, t)
         if frame is None:
             continue
-        result = visual_model.predict(frame)
-        label  = result.get("label", "normal")
-        conf   = result.get("confidence", 0.0)
-        srank  = SEVERITY_RANK.get(_sev(label), 0)
-        rank   = (srank, conf)
-        if rank > best_rank:
-            best_rank   = rank
-            best_result = result
+        results.append(visual_model.predict(frame))
 
-    return best_result
+    if not results:
+        return {"label": "normal", "confidence": 0.0}
+
+    # Weapon detected on ANY frame → immediate escalation
+    for r in results:
+        if r.get("label") == "weapon_detected":
+            return r
+
+    # Majority voting on the label
+    labels = [r.get("label", "normal") for r in results]
+    label_counts = Counter(labels)
+    majority_label, majority_count = label_counts.most_common(1)[0]
+
+    # Need strict majority (>50%) to report an anomaly
+    if majority_label != "normal" and majority_count > len(results) / 2:
+        # Average confidence of frames that voted for this label
+        matching = [r for r in results if r.get("label") == majority_label]
+        avg_conf = sum(r["confidence"] for r in matching) / len(matching)
+        return {"label": majority_label, "confidence": round(avg_conf, 3)}
+
+    # Default: majority says normal, or no clear majority
+    normal_confs = [r["confidence"] for r in results if r.get("label") == "normal"]
+    avg_normal = sum(normal_confs) / len(normal_confs) if normal_confs else 0.9
+    return {"label": "normal", "confidence": round(avg_normal, 3)}
 
 
 def severity_color(severity: str) -> str:

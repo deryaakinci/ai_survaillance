@@ -88,7 +88,7 @@ def get_alerts(
             "visual_label": a.visual_label,
             "severity": a.severity,
             "zone": a.zone,
-            "timestamp": a.timestamp.isoformat(),
+            "timestamp": a.timestamp.isoformat() + "Z",
             "snapshot_url": a.snapshot_url,
             "audio_clip_url": a.audio_clip_url,
         }
@@ -129,8 +129,8 @@ async def create_alert(
             "visual_label": visual_label,
             "severity": severity,
             "zone": zone,
-            "timestamp": alert.timestamp.isoformat(),
-            "title": _get_title(audio_label, severity),
+            "timestamp": alert.timestamp.isoformat() + "Z",
+            "title": _get_title(audio_label, severity, visual_label),
             "body": f"{audio_label} · {visual_label} · {zone}",
         })
 
@@ -138,14 +138,23 @@ async def create_alert(
 
 
 
-def _get_title(audio_label: str, severity: str) -> str:
+def _get_title(audio_label: str, severity: str, visual_label: str = "normal") -> str:
     titles = {
-        "gunshot": "Gunshot detected",
-        "impact": "Impact detected",
-        "distress_sounds": "Distress sounds detected",
-        "forced_entry": "Forced entry detected",
-        "fight_sounds": "Fight detected",
-        "siren": "Emergency siren nearby",
+        "gunshot":           "Gunshot detected",
+        "impact":            "Impact detected",
+        "distress_sounds":   "Distress sounds detected",
+        "forced_entry":      "Forced entry detected",
+        "fight_sounds":      "Fight detected",
+        "siren":             "Emergency siren nearby",
+        "weapon_detected":   "Weapon detected",
+        "explosion":         "Explosion detected",
+        "car_crash":         "Car crash",
+        "violence":          "Violence detected",
+        "robbery":           "Robbery in progress",
+        "person_down":       "Person down",
+        "intrusion_detected":"Intrusion detected",
+        "suspicious_package":"Suspicious package",
     }
+    primary = visual_label if visual_label != "normal" else audio_label
     prefix = "🚨" if severity == "high" else "⚠️"
-    return f"{prefix} {titles.get(audio_label, 'Alert detected')}"
+    return f"{prefix} {titles.get(primary, 'Alert detected')}"

@@ -110,14 +110,13 @@ class AlertProvider extends ChangeNotifier {
   }
 
   int countByType(String label) {
-    // Use backend data if available, fall back to client-side count
     if (alertTypes.containsKey(label)) {
       return alertTypes[label] ?? 0;
     }
-    return alerts
-        .where((a) => a.audioLabel
-            .toLowerCase()
-            .contains(label.toLowerCase()))
-        .length;
+    final lc = label.toLowerCase();
+    return alerts.where((a) =>
+      a.audioLabel.toLowerCase().contains(lc) ||
+      a.visualLabel.toLowerCase().contains(lc),
+    ).length;
   }
 }

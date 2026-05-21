@@ -102,10 +102,9 @@ def get_stats_overview(
     # ── Alert type breakdown (by audio_label OR visual_label) ────────
     from sqlalchemy import or_
     type_keys = [
-        "gunshot", "impact", "distress_sounds", "forced_entry",
-        "fight", "weapon", "siren",
-        "robbery", "intrusion_detected", "vehicle_intrusion", "violence",
-        "explosion", "person_down", "suspicious_package",
+        "gunshot", "impact", "distress_sounds", "forced_entry", "fight_sounds", "siren",
+        "weapon_detected", "explosion", "car_crash", "violence",
+        "robbery", "person_down", "intrusion_detected", "suspicious_package",
     ]
 
     alert_types = {}
