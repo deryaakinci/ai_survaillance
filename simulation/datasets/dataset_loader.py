@@ -83,7 +83,6 @@ class VideoDatasetLoader:
             "robbery",
             "person_down",
             "intrusion_detected",
-            "suspicious_package",
         ]
 
     def load_frame(self, video_path: str):
@@ -148,9 +147,89 @@ class VideoDatasetLoader:
         print(f"Target: {len(self.classes) * 20} files (20 per class)")
 
 
+class ImageDatasetLoader:
+    """Loads static images. weapon_detected images get 3× weight during training."""
+
+    # Sync with train_visual_classifier.DEFAULT_IMAGE_WEIGHTS
+    IMAGE_WEIGHTS = {
+        "weapon_detected": 3,
+    }
+
+    def __init__(self, base_path="simulation/datasets/image"):
+        self.base_path = base_path
+        self.classes = [
+            "normal",
+            "weapon_detected",
+            "car_crash",
+        ]
+
+    def load_class(self, class_name: str):
+        class_path = os.path.join(self.base_path, class_name)
+        if not os.path.exists(class_path):
+            print(f"No folder found for {class_name}")
+            return []
+
+        samples = []
+        for ext in ["*.jpg", "*.jpeg", "*.png", "*.bmp", "*.webp"]:
+            for file in Path(class_path).glob(ext):
+                try:
+                    img = cv2.imread(str(file))
+                    if img is not None:
+                        samples.append({
+                            "image": img,
+                            "label": class_name,
+                            "file": str(file),
+                        })
+                except Exception as e:
+                    print(f"Could not load {file}: {e}")
+
+        return samples
+
+    def load_all(self):
+        all_samples = []
+        for cls in self.classes:
+            samples = self.load_class(cls)
+            all_samples.extend(samples)
+        print(f"\nTotal image samples loaded: {len(all_samples)}")
+        return all_samples
+
+    def get_stats(self):
+        print("\nImage dataset statistics:")
+        print("-" * 55)
+        total = 0
+        for cls in self.classes:
+            path = os.path.join(self.base_path, cls)
+            if os.path.exists(path):
+                count = 0
+                for ext in ["*.jpg", "*.jpeg", "*.png", "*.bmp", "*.webp"]:
+                    count += len(list(Path(path).glob(ext)))
+                total += count
+
+                weight = self.IMAGE_WEIGHTS.get(cls, 1)
+                effective = count * weight
+
+                if count >= 20:
+                    status = "✓"
+                elif count > 0:
+                    status = "⚠ need more"
+                else:
+                    status = "✗ empty"
+
+                emphasis = f"  (×{weight} → {effective} effective)" if weight > 1 else ""
+                print(f"{cls:<25} {count:>3} files  {status}{emphasis}")
+            else:
+                print(f"{cls:<25}   0 files  ✗ folder missing")
+        print("-" * 55)
+        print(f"Total: {total} image files")
+        print(f"Note: weapon_detected images get 3× weight during training")
+
+
 if __name__ == "__main__":
     audio_loader = AudioDatasetLoader()
     audio_loader.get_stats()
 
     video_loader = VideoDatasetLoader()
     video_loader.get_stats()
+
+    image_loader = ImageDatasetLoader()
+    image_loader.get_stats()

@@ -5,9 +5,7 @@ import numpy as np
 import json
 import os
 
-# Minimum confidence to report an anomaly — below this we say "normal"
 MIN_CONFIDENCE = 0.25
-
 
 LABELS = [
     "normal",
@@ -91,14 +89,11 @@ class AudioAnomalyDetector:
             )
             return
 
-        # Load label map if available
         if os.path.exists(self.LABELS_PATH):
             with open(self.LABELS_PATH) as f:
                 raw = json.load(f)
                 self.idx_to_label = {int(k): v for k, v in raw.items()}
 
-        # Derive num_classes from the checkpoint itself so the architecture
-        # stays compatible even if labels.json was updated after training.
         checkpoint = torch.load(self.MODEL_PATH, map_location=self.device)
         num_classes = checkpoint["classifier.7.weight"].shape[0]
         self.model = AudioCNN(num_classes=num_classes).to(self.device)
@@ -131,24 +126,21 @@ class AudioAnomalyDetector:
             output = self.model(tensor)
             probs = torch.softmax(output, dim=1)
 
-        # Get top-2 predictions for smarter decisions
         top2_probs, top2_idx = probs.topk(2, dim=1)
         top1_conf = float(top2_probs[0][0])
         top1_label = self.idx_to_label.get(int(top2_idx[0][0]), "normal")
         top2_conf = float(top2_probs[0][1])
         top2_label = self.idx_to_label.get(int(top2_idx[0][1]), "normal")
 
-        # If top prediction is "normal", check if 2nd choice is
-        # an anomaly with decent confidence (borderline case)
+        # Check borderline: top1 normal but top2 anomaly has decent conf
         if top1_label == "normal":
-            if top2_label != "normal" and top2_conf > 0.20:
+            if top2_label != "normal" and top2_conf > 0.30:
                 return {
                     "label": top2_label,
-                    "confidence": round(top2_conf * 0.9, 3),
+                    "confidence": round(top2_conf * 0.8, 3),
                 }
             return {"label": "normal", "confidence": round(top1_conf, 3)}
 
-        # If anomaly confidence is below threshold → report normal
         if top1_conf < MIN_CONFIDENCE:
             return {"label": "normal", "confidence": round(1.0 - top1_conf, 3)}
 

@@ -118,10 +118,11 @@ class FusionEngine:
         "siren":          {"car_crash", "person_down", "explosion"},
     }
 
-    # Minimum confidence to consider a prediction real
-    # Audio stays strict (0.45) to filter ambient-sound false positives.
-    # Visual is looser (0.30) because scene classification is harder.
-    MIN_AUDIO_CONFIDENCE = 0.25
+    # Minimum confidence to consider a prediction real.
+    # Audio at 0.35 filters ambient-sound false positives while still
+    # catching genuine threats.  Visual at 0.30 is looser because scene
+    # classification is inherently harder.
+    MIN_AUDIO_CONFIDENCE = 0.35
     MIN_VISUAL_CONFIDENCE = 0.30
 
     def fuse(self, audio_result: dict, visual_result: dict) -> dict:
@@ -182,7 +183,7 @@ class FusionEngine:
         # the visual classification is almost certainly a false positive
         # (e.g. news/weather footage, busy backgrounds). Genuine threats
         # either trigger audio confirmation or produce high visual confidence.
-        if (v_label != "normal" and v_conf < 0.55
+        if (v_label != "normal" and v_conf < 0.60
                 and a_label == "normal" and a_conf >= 0.30):
             v_label = "normal"
             v_conf = 1.0 - v_conf
@@ -193,17 +194,18 @@ class FusionEngine:
         # hears weapon-related sounds while the camera sees a violent scene
         # OR the camera can't classify the scene at all, the most likely
         # explanation is that weapons are present.
-        WEAPON_AUDIO   = {"gunshot", "fight_sounds", "distress_sounds"}
+        # Only explicit gunshot audio is reliable enough to upgrade to weapon.
+        # fight_sounds and distress_sounds are too generic (TV audio, arguments,
+        # loud conversations) and produced many false positives.
+        WEAPON_AUDIO   = {"gunshot"}
         WEAPON_VISUAL  = {"violence", "robbery", "intrusion_detected", "person_down"}
         if a_label in WEAPON_AUDIO and v_label in WEAPON_VISUAL:
             v_label = "weapon_detected"
-            v_conf  = max(v_conf, 0.75)
-        elif a_label in WEAPON_AUDIO and v_label == "normal":
-            # Audio hears clear threat but visual can't classify the scene
-            # (neither model can identify firearms).  Infer weapon presence
-            # from audio with moderate confidence.
-            v_label = "weapon_detected"
-            v_conf  = round(a_conf * 0.80, 3)
+            v_conf  = max(v_conf, 0.65)
+        # Audio-only weapon inference removed: overriding a visual "normal"
+        # verdict from audio alone was a major source of false positives.
+        # If the camera sees nothing threatening, audio ambiguity should not
+        # escalate to a weapon alert.
 
         # When only one modality fires, trust it as-is (no conflict to resolve)
 

@@ -41,7 +41,9 @@ LABELS = [
     "robbery",
     "person_down",
     "intrusion_detected",
-    "suspicious_package",
+    # NOTE: suspicious_package is NOT a classifier class — it is detected
+    # by the fusion engine's abandoned-object tracking (COCO bag/suitcase
+    # detection + stationary-time + owner-distance logic).
 ]
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff", ".tif"}
@@ -196,7 +198,17 @@ def extract_frames(
     return all_samples
 
 
-def collect_images(images_path="simulation/datasets/image", max_per_class=300):
+
+DEFAULT_IMAGE_WEIGHTS = {
+    "weapon_detected": 3,
+}
+
+
+def collect_images(
+    images_path="simulation/datasets/image",
+    max_per_class=300,
+    class_image_weights=None,
+):
     """Collect static images from an images dataset directory.
 
     Drop images into simulation/datasets/image/<label>/ and they will be
@@ -205,12 +217,24 @@ def collect_images(images_path="simulation/datasets/image", max_per_class=300):
     Images are capped at max_per_class per label to prevent domain-
     mismatched datasets (e.g. Roboflow exports) from overwhelming the
     video-derived training data.
+
+    class_image_weights : dict[str, int]
+        Per-class repeat multiplier.  Images for a class with weight N
+        will appear N times in the returned sample list, so the sampler
+        draws them more often.  Default weights are merged with any
+        user-supplied overrides.
     """
     if not os.path.exists(images_path):
         return []
 
+    weights = dict(DEFAULT_IMAGE_WEIGHTS)
+    if class_image_weights:
+        weights.update(class_image_weights)
+
     print("\n🖼  Collecting static images...")
     print(f"   (capped at {max_per_class} per class)")
+    if weights:
+        print(f"   image emphasis: {weights}")
     print("-" * 50)
 
     all_samples = []
@@ -232,18 +256,24 @@ def collect_images(images_path="simulation/datasets/image", max_per_class=300):
             np.random.shuffle(images)
             images = images[:max_per_class]
 
+        repeat = weights.get(label, 1)
         label_idx = LABEL_TO_IDX[label]
         for img_path in sorted(images):
-            all_samples.append({
+            sample = {
                 "path": str(img_path),
                 "label_idx": label_idx,
                 "label": label,
-            })
+            }
+            # Repeat the sample `repeat` times so the sampler sees it more
+            for _ in range(repeat):
+                all_samples.append(sample)
 
-        print(f"✓ {label:<25} {len(images)} images")
+        effective = len(images) * repeat
+        suffix = f" (×{repeat})" if repeat > 1 else ""
+        print(f"✓ {label:<25} {len(images)} images → {effective} samples{suffix}")
 
     if all_samples:
-        print(f"\nTotal static images: {len(all_samples)}")
+        print(f"\nTotal static image samples: {len(all_samples)}")
     else:
         print("No images found (folder missing or empty — skipping)")
 
@@ -308,10 +338,16 @@ def train(
     print(f"\nUsing device: {device}")
 
     # ── Extract frames from videos + collect static images ────────
-    # Static images are capped at 300 per class to prevent Roboflow-
-    # sourced images from overwhelming the video-derived training data.
+    # Static images capped per class to prevent domain-mismatched datasets
+    # from overwhelming video-derived training data.  Cap set to 800 so
+    # image-only classes like car_crash (510 images, no videos) get enough
+    # data while not overwhelming video-backed classes (~2400 frames each).
+    #
+    # weapon_detected gets a 3× image weight because the weapon image
+    # dataset (diverse gun/knife photos) is a better source for learning
+    # weapon features than the shooting video frames (chaotic, blurry).
     all_samples = extract_frames(source_path, frames_path)
-    all_samples += collect_images(images_path, max_per_class=300)
+    all_samples += collect_images(images_path, max_per_class=800)
 
     if not all_samples:
         print("\nNo training data found — add videos to simulation/datasets/video/")
@@ -382,10 +418,12 @@ def train(
     # ── Model ──────────────────────────────────────────────────────
     model = build_model(NUM_CLASSES, freeze_backbone=True).to(device)
 
-    # Label smoothing helps prevent overconfident wrong predictions
+    # Label smoothing helps prevent overconfident wrong predictions.
+    # 0.15 is more aggressive than default 0.1 — trades a small amount
+    # of peak accuracy for significantly fewer high-confidence FPs.
     criterion = nn.CrossEntropyLoss(
         weight=class_weights_tensor,
-        label_smoothing=0.1,
+        label_smoothing=0.15,
     )
 
     # Phase 1: only train the classifier head
@@ -430,6 +468,8 @@ def train(
             outputs = model(images)
             loss = criterion(outputs, labels)
             loss.backward()
+            # Clip gradients to prevent instability during fine-tuning
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
             train_loss += loss.item()

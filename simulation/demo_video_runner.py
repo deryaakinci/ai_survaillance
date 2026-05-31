@@ -146,10 +146,13 @@ def best_visual_in_chunk(
     if not results:
         return {"label": "normal", "confidence": 0.0}
 
-    # Weapon detected on ANY frame → immediate escalation
-    for r in results:
-        if r.get("label") == "weapon_detected":
-            return r
+    # Weapon detected — require at least 2 frames to agree before bypassing
+    # majority vote.  A single frame can be a transient COCO false positive
+    # (e.g. umbrella mistaken for a bat), but 2+ frames is a strong signal.
+    weapon_hits = [r for r in results if r.get("label") == "weapon_detected"]
+    if len(weapon_hits) >= 2:
+        best_weapon = max(weapon_hits, key=lambda r: r["confidence"])
+        return best_weapon
 
     # Majority voting on the label
     labels = [r.get("label", "normal") for r in results]

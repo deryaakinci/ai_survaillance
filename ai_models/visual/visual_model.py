@@ -16,7 +16,9 @@ LABELS = [
     "robbery",
     "person_down",
     "intrusion_detected",
-    "suspicious_package",
+    # NOTE: suspicious_package is NOT a classifier class — it is detected
+    # by the fusion engine's abandoned-object tracking (COCO bag/suitcase
+    # detection + stationary-time + owner-distance logic).
 ]
 
 CLASSIFIER_MODEL_PATH = "ai_models/visual/saved_model/best_classifier.pth"
@@ -24,7 +26,7 @@ FINETUNED_YOLO_PATH   = "ai_models/visual/saved_model/surveillance_model/weights
 FALLBACK_MODEL_PATH   = "yolov8n.pt"
 
 # Minimum confidence to report an anomaly — below this we say "normal"
-MIN_CONFIDENCE = 0.45
+MIN_CONFIDENCE = 0.55
 
 
 # ── ImageNet normalisation (must match training) ──────────────────────
@@ -53,7 +55,9 @@ def _build_classifier(num_classes: int):
 
 
 class VisualAnomalyDetector:
-    WEAPON_COCO_LABELS = {"knife", "scissors", "baseball bat"}
+    # Only "knife" — scissors and baseball bat have extremely high FP rates
+    # in surveillance (umbrellas, phones, kitchen tools, weather graphics).
+    WEAPON_COCO_LABELS = {"knife"}
 
     HIGH_PRIORITY_LABELS = {
         "weapon_detected", "explosion", "person_down",
@@ -82,9 +86,8 @@ class VisualAnomalyDetector:
             print("[VisualAnomalyDetector] ResNet18 not found — run train_visual_classifier.py")
 
         # ── Load YOLO models ────────────────────────────────────────────
-        # Always load base YOLO for COCO weapon detection (knife, scissors,
-        # baseball bat) as an additional detection layer on top of our
-        # fine-tuned models.
+        # Always load base YOLO for COCO weapon detection (knife only)
+        # as an additional detection layer on top of our fine-tuned models.
         try:
             from ultralytics import YOLO as _YOLO
             self.yolo_base = _YOLO(FALLBACK_MODEL_PATH)
@@ -103,20 +106,22 @@ class VisualAnomalyDetector:
         resnet_result = self._run_resnet(frame)
 
         # ── Step 2: COCO weapon object scan (supplementary) ─────────
-        # Only fires if base YOLO physically detects a knife/scissors/bat.
+        # Only fires if base YOLO physically detects a knife.
         # If ResNet strongly says "normal", we override — prevents false
-        # positives on benign footage (e.g. weather reports).
+        # positives on benign footage (e.g. kitchen scenes).
         weapon_hit = self._run_weapon_scan(frame)
 
         if weapon_hit is not None:
             r_label = resnet_result["label"] if resnet_result else "normal"
             r_conf = resnet_result["confidence"] if resnet_result else 0.0
 
-            # Trust COCO if ResNet also sees a threat, or ResNet is unsure
-            if r_label != "normal" or r_conf < 0.60:
+            # Trust COCO only if ResNet also sees a threat, or ResNet is
+            # genuinely uncertain.  A ResNet "normal" at 0.45+ is already
+            # substantial evidence the scene is benign → override COCO.
+            if r_label != "normal" or r_conf < 0.45:
                 return weapon_hit
-            # ResNet confidently says normal → ignore COCO false positive
-            # (common with weather graphics, kitchen scenes, etc.)
+            # ResNet says normal with reasonable confidence → ignore COCO
+            # false positive (common with kitchen scenes, news, etc.)
 
         # ── Step 3: Return ResNet result ────────────────────────────
         if resnet_result is None:
@@ -132,11 +137,12 @@ class VisualAnomalyDetector:
 
     def _run_weapon_scan(self, frame) -> dict | None:
         """Use base YOLO (COCO-pretrained) to detect weapons.
-        This preserves YOLO's strong weapon knowledge even after fine-tuning."""
+        This preserves YOLO's strong weapon knowledge even after fine-tuning.
+        Only fires on high-confidence knife detections to avoid FPs."""
         if self.yolo_base is None:
             return None
 
-        results = self.yolo_base(frame, verbose=False, conf=0.35)
+        results = self.yolo_base(frame, verbose=False, conf=0.55)
 
         best_conf = 0.0
         for result in results:
@@ -147,8 +153,9 @@ class VisualAnomalyDetector:
                 if label in self.WEAPON_COCO_LABELS and confidence > best_conf:
                     best_conf = confidence
 
-        if best_conf > 0.35:
-            return {"label": "weapon_detected", "confidence": round(min(best_conf * 1.1, 0.99), 3)}
+        if best_conf > 0.55:
+            # No artificial confidence inflation — report what YOLO actually saw
+            return {"label": "weapon_detected", "confidence": round(best_conf, 3)}
 
         return None
 
@@ -183,9 +190,9 @@ class VisualAnomalyDetector:
 
         if top1_label == "normal":
             # Only consider 2nd-best anomaly if the model is genuinely uncertain
-            # (top1 normal confidence is low) AND the anomaly is fairly certain.
-            if top1_conf < 0.45 and top2_label != "normal" and top2_conf > 0.40:
-                return {"label": top2_label, "confidence": round(top2_conf * 0.9, 3)}
+            # (top1 normal confidence is low) AND the anomaly clears MIN_CONFIDENCE.
+            if top1_conf < 0.40 and top2_label != "normal" and top2_conf > MIN_CONFIDENCE:
+                return {"label": top2_label, "confidence": round(top2_conf * 0.85, 3)}
             return {"label": "normal", "confidence": round(top1_conf, 3)}
 
         if top1_conf < MIN_CONFIDENCE:
@@ -293,7 +300,8 @@ class VisualAnomalyDetector:
         violence, robbery, explosion are left to the fine-tuned model
         and ResNet since COCO cannot detect actions.
         """
-        weapon_objects = ["knife", "scissors", "baseball bat"]
+        # Only "knife" — consistent with WEAPON_COCO_LABELS
+        weapon_objects = ["knife"]
         vehicle_objects = ["car", "motorcycle", "truck", "bus"]
 
         detections = []
@@ -322,9 +330,12 @@ class VisualAnomalyDetector:
             best = max((d["confidence"] for d in detections if d["label"] in weapon_objects), default=0.9)
             return {"label": "weapon_detected", "confidence": round(best, 3)}
         if has_backpack and person_count == 0:
-            return {"label": "suspicious_package", "confidence": 0.83}
+            # Logic-based: unattended bag → suspicious (moderate confidence)
+            return {"label": "suspicious_package", "confidence": 0.65}
         if has_vehicle and person_count == 0:
-            return {"label": "car_crash", "confidence": 0.82}
+            # Vehicle with no people is weak evidence — could just be a
+            # parked car. Report at moderate confidence to avoid FPs.
+            return {"label": "car_crash", "confidence": 0.60}
         if person_count >= 1 and self._check_person_down(detections):
             return {"label": "person_down", "confidence": 0.75}
 
@@ -369,7 +380,8 @@ class VisualAnomalyDetector:
             "robbery", "intrusion_detected", "violence",
         ]
         medium = [
-            "car_crash", "suspicious_package",
+            "car_crash",
+            # suspicious_package severity is handled by fusion engine
         ]
         low = []
 

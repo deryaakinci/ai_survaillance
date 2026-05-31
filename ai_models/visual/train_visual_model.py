@@ -17,7 +17,8 @@ LABELS = [
     "robbery",
     "person_down",
     "intrusion_detected",
-    "suspicious_package",
+    # NOTE: suspicious_package is handled by fusion engine's abandoned-object
+    # tracking logic (COCO bag/suitcase detection + stationary-time + owner-distance).
 ]
 LABEL_TO_IDX = {label: idx for idx, label in enumerate(LABELS)}
 
