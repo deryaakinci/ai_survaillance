@@ -16,9 +16,7 @@ LABELS = [
     "robbery",
     "person_down",
     "intrusion_detected",
-    # NOTE: suspicious_package is NOT a classifier class — it is detected
-    # by the fusion engine's abandoned-object tracking (COCO bag/suitcase
-    # detection + stationary-time + owner-distance logic).
+ 
 ]
 
 CLASSIFIER_MODEL_PATH = "ai_models/visual/saved_model/best_classifier.pth"
@@ -85,19 +83,18 @@ class VisualAnomalyDetector:
         else:
             print("[VisualAnomalyDetector] ResNet18 not found — run train_visual_classifier.py")
 
-        # ── Load YOLO models ────────────────────────────────────────────
-        # Always load base YOLO for COCO weapon detection (knife only)
-        # as an additional detection layer on top of our fine-tuned models.
-        try:
-            from ultralytics import YOLO as _YOLO
-            self.yolo_base = _YOLO(FALLBACK_MODEL_PATH)
-            print("[VisualAnomalyDetector] Base YOLO loaded for COCO weapon detection")
-
-            if os.path.exists(FINETUNED_YOLO_PATH):
-                self.yolo = _YOLO(FINETUNED_YOLO_PATH)
-                print(f"[VisualAnomalyDetector] Fine-tuned YOLO loaded from {FINETUNED_YOLO_PATH}")
-        except ImportError:
-            print("[VisualAnomalyDetector] ultralytics not installed — YOLO unavailable")
+        # ── Load YOLO models (may be implemented in the future) ────────────────────
+        # try:
+        #     from ultralytics import YOLO as _YOLO
+        #     self.yolo_base = _YOLO(FALLBACK_MODEL_PATH)
+        #     print("[VisualAnomalyDetector] Base YOLO loaded for COCO weapon detection")
+        # 
+        #     if os.path.exists(FINETUNED_YOLO_PATH):
+        #         self.yolo = _YOLO(FINETUNED_YOLO_PATH)
+        #         print(f"[VisualAnomalyDetector] Fine-tuned YOLO loaded from {FINETUNED_YOLO_PATH}")
+        # except ImportError:
+        #     print("[VisualAnomalyDetector] ultralytics not installed — YOLO unavailable")
+        pass
 
     # ── Public entry point ────────────────────────────────────────────
 
@@ -105,23 +102,24 @@ class VisualAnomalyDetector:
         # ── Step 1: ResNet18 scene classification (primary) ─────────
         resnet_result = self._run_resnet(frame)
 
-        # ── Step 2: COCO weapon object scan (supplementary) ─────────
+        # ── Step 2: COCO weapon object scan (COMMENTED OUT FOR NOW) ──
         # Only fires if base YOLO physically detects a knife.
         # If ResNet strongly says "normal", we override — prevents false
         # positives on benign footage (e.g. kitchen scenes).
-        weapon_hit = self._run_weapon_scan(frame)
-
-        if weapon_hit is not None:
-            r_label = resnet_result["label"] if resnet_result else "normal"
-            r_conf = resnet_result["confidence"] if resnet_result else 0.0
-
-            # Trust COCO only if ResNet also sees a threat, or ResNet is
-            # genuinely uncertain.  A ResNet "normal" at 0.45+ is already
-            # substantial evidence the scene is benign → override COCO.
-            if r_label != "normal" or r_conf < 0.45:
-                return weapon_hit
-            # ResNet says normal with reasonable confidence → ignore COCO
-            # false positive (common with kitchen scenes, news, etc.)
+        # weapon_hit = self._run_weapon_scan(frame)
+        # 
+        # if weapon_hit is not None:
+        #     r_label = resnet_result["label"] if resnet_result else "normal"
+        #     r_conf = resnet_result["confidence"] if resnet_result else 0.0
+        # 
+        #     # Trust COCO only if ResNet also sees a threat, or ResNet is
+        #     # genuinely uncertain.  A ResNet "normal" at 0.45+ is already
+        #     # substantial evidence the scene is benign → override COCO.
+        #     if r_label != "normal" or r_conf < 0.45:
+        #         return weapon_hit
+        #     # ResNet says normal with reasonable confidence → ignore COCO
+        #     # false positive (common with kitchen scenes, news, etc.)
+        pass
 
         # ── Step 3: Return ResNet result ────────────────────────────
         if resnet_result is None:
