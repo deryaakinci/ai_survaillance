@@ -158,6 +158,25 @@ class FusionEngine:
             a_label = "normal"
             a_conf = 1.0 - a_conf
 
+        # ── Cross-modal upgrade ──────────────────────────────────────────
+        # If the visual model is uncertain (returns "normal" below 0.80 confidence)
+        # but the audio is confidently anomalous (a_label != "normal"), we upgrade
+        # the visual label to a compatible threat class so the alert and dashboard
+        # are unified and correct.
+        if a_label != "normal" and v_label == "normal" and v_conf < 0.80:
+            audio_to_visual_map = {
+                "gunshot": "weapon_detected",
+                "fight_sounds": "violence",
+                "distress_sounds": "violence",
+                "forced_entry": "intrusion_detected",
+                "impact": "car_crash",
+                "siren": "intrusion_detected"
+            }
+            mapped_visual = audio_to_visual_map.get(a_label)
+            if mapped_visual:
+                v_label = mapped_visual
+                v_conf  = max(v_conf, 0.60)
+
         # ── Cross-modal consistency check ──────────────────────────────
         # Visual is generally more reliable for scene classification,
         # so when audio contradicts visual we correct the audio label.
@@ -180,10 +199,11 @@ class FusionEngine:
         # ── Suppress weak visual-only anomalies ────────────────────────
         # Runs AFTER cross-modal re-check so it sees the final audio state.
         # If audio is confidently silent and visual is only weakly anomalous,
-        # the visual classification is almost certainly a false positive
-        # (e.g. news/weather footage, busy backgrounds). Genuine threats
-        # either trigger audio confirmation or produce high visual confidence.
-        if (v_label != "normal" and v_conf < 0.60
+        # the visual classification is almost certainly a false positive.
+        # We use a higher threshold (0.70) for non-critical scene classifications
+        # like car_crash, and 0.60 for high-priority critical threats.
+        suppress_thresh = 0.70 if v_label in {"car_crash", "suspicious_package"} else 0.60
+        if (v_label != "normal" and v_conf < suppress_thresh
                 and a_label == "normal" and a_conf >= 0.30):
             v_label = "normal"
             v_conf = 1.0 - v_conf

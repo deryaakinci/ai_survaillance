@@ -18,11 +18,11 @@ def main():
     except Exception as e:
         print(f"Error evaluating audio model: {e}")
 
-    # Evaluate Visual Model (ResNet18 Classifier)
+    # Evaluate Visual Model (ResNet34 Classifier)
     try:
         from ai_models.visual.train_visual_classifier import evaluate as evaluate_visual
         print("\n" + "=" * 60)
-        print("👁️ VISUAL MODEL (ResNet18 Classifier) EVALUATION")
+        print("👁️ VISUAL MODEL (ResNet34 Classifier) EVALUATION")
         print("=" * 60)
         evaluate_visual()
     except Exception as e:

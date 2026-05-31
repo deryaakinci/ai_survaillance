@@ -40,7 +40,7 @@ _inference_transform = transforms.Compose([
 
 
 def _build_classifier(num_classes: int):
-    model = models.resnet18(weights=None)
+    model = models.resnet34(weights=None)
     in_features = model.fc.in_features
     model.fc = nn.Sequential(
         nn.Dropout(0.4),
@@ -63,7 +63,7 @@ class VisualAnomalyDetector:
     }
 
     def __init__(self):
-        self.resnet  = None   # ResNet18 scene classifier
+        self.resnet  = None   # ResNet34 scene classifier
         self.yolo    = None   # fine-tuned surveillance YOLO
         self.yolo_base = None # base yolov8n for COCO weapon scan
         self.device = torch.device(
@@ -72,16 +72,16 @@ class VisualAnomalyDetector:
             else "cpu"
         )
 
-        # ── Load ResNet18 ──────────────────────────────────────────────
+        # ── Load ResNet34 ──────────────────────────────────────────────
         if os.path.exists(CLASSIFIER_MODEL_PATH):
             self.resnet = _build_classifier(len(LABELS)).to(self.device)
             self.resnet.load_state_dict(
                 torch.load(CLASSIFIER_MODEL_PATH, map_location=self.device)
             )
             self.resnet.eval()
-            print(f"[VisualAnomalyDetector] ResNet18 loaded from {CLASSIFIER_MODEL_PATH}")
+            print(f"[VisualAnomalyDetector] ResNet34 loaded from {CLASSIFIER_MODEL_PATH}")
         else:
-            print("[VisualAnomalyDetector] ResNet18 not found — run train_visual_classifier.py")
+            print("[VisualAnomalyDetector] ResNet34 not found — run train_visual_classifier.py")
 
         # ── Load YOLO models (may be implemented in the future) ────────────────────
         # try:

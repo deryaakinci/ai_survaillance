@@ -146,13 +146,16 @@ def best_visual_in_chunk(
     if not results:
         return {"label": "normal", "confidence": 0.0}
 
-    # Weapon detected — require at least 2 frames to agree before bypassing
-    # majority vote.  A single frame can be a transient COCO false positive
-    # (e.g. umbrella mistaken for a bat), but 2+ frames is a strong signal.
-    weapon_hits = [r for r in results if r.get("label") == "weapon_detected"]
-    if len(weapon_hits) >= 2:
-        best_weapon = max(weapon_hits, key=lambda r: r["confidence"])
-        return best_weapon
+    # High-priority threats — require at least 2 frames to agree before bypassing
+    # majority vote. A single frame can be a transient false positive, but 2+ frames
+    # is a strong signal for critical threats like weapons, explosions, or violence.
+    priority_hits = [r for r in results if r.get("label") in {"weapon_detected", "explosion", "violence"}]
+    prio_counts = Counter(r.get("label") for r in priority_hits)
+    for label, count in prio_counts.items():
+        if count >= 2:
+            matching = [r for r in priority_hits if r.get("label") == label]
+            best_prio = max(matching, key=lambda r: r["confidence"])
+            return best_prio
 
     # Majority voting on the label
     labels = [r.get("label", "normal") for r in results]

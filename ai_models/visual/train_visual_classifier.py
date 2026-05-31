@@ -1,11 +1,11 @@
 """
 train_visual_classifier.py
 ==========================
-Train a ResNet18 image classifier for surveillance scene classification.
+Train a ResNet34 image classifier for surveillance scene classification.
 
 This replaces the broken YOLO-as-classifier approach.  YOLO is an object
 *detection* model that needs real bounding-box annotations, but our data
-only has whole-frame class labels.  A proper image classifier (ResNet18
+only has whole-frame class labels.  A proper image classifier (ResNet34
 with ImageNet pre-training) is the correct architecture for this task.
 
 Training strategy:
@@ -85,15 +85,13 @@ IMAGENET_STD  = [0.229, 0.224, 0.225]
 
 train_transform = transforms.Compose([
     transforms.Resize((256, 256)),
-    transforms.RandomResizedCrop(224, scale=(0.7, 1.0)),
+    transforms.RandomResizedCrop(224, scale=(0.8, 1.0)),
     transforms.RandomHorizontalFlip(),
     transforms.RandomRotation(15),
-    transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.2, hue=0.1),
-    transforms.RandomGrayscale(p=0.1),
-    transforms.RandomPerspective(distortion_scale=0.2, p=0.3),
+    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.1, hue=0.05),
+    transforms.RandomGrayscale(p=0.05),
     transforms.ToTensor(),
     transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-    transforms.RandomErasing(p=0.2, scale=(0.02, 0.15)),
 ])
 
 val_transform = transforms.Compose([
@@ -108,24 +106,36 @@ val_transform = transforms.Compose([
 #  Frame extraction
 # ──────────────────────────────────────────────
 
-def extract_frames(
+def extract_and_split_dataset(
     source_path="simulation/datasets/video",
+    images_path="simulation/datasets/image",
     output_path="ai_models/visual/classifier_frames",
     frames_per_video=8,
+    max_images_per_class=800,
+    test_size=0.2,
+    random_state=42
 ):
-    """Extract balanced frames from video dataset and save as JPEGs."""
-
-    print("\n📸 Extracting frames from videos...")
-    print("-" * 50)
-
-    # Clean stale frames from previous runs to prevent label corruption
+    """
+    Extract frames from videos and gather images, performing a strict video-level
+    and image-level split first to prevent any data leakage.
+    """
+    np.random.seed(random_state)
+    import random
+    random.seed(random_state)
+    
+    print("\n📸 Processing and splitting dataset (strict video/image level split)...")
+    print("-" * 70)
+    
+    # Clean stale frames
     if os.path.exists(output_path):
-        print("Removing stale frames from previous training run...")
+        print("Cleaning stale classifier_frames directory...")
         shutil.rmtree(output_path)
-
     os.makedirs(output_path, exist_ok=True)
-
-    # Count videos per class
+    
+    train_samples = []
+    val_samples = []
+    
+    # --- Part 1: Gather video files and split at the video level ---
     class_videos = {}
     for label in LABELS:
         folder = os.path.join(source_path, label)
@@ -134,150 +144,127 @@ def extract_frames(
             for ext in ["*.mp4", "*.avi", "*.mov"]:
                 videos.extend(list(Path(folder).glob(ext)))
             if videos:
-                class_videos[label] = videos
-
-    if not class_videos:
-        print("No video files found!")
-        return []
-
-    # Balance: oversample minority classes to match the largest class
-    max_videos = max(len(v) for v in class_videos.values())
+                class_videos[label] = sorted(videos) # sorting for determinism
+                
+    # Balance target based on max video count per class
+    max_videos = max(len(v) for v in class_videos.values()) if class_videos else 0
     target_frames = max_videos * frames_per_video
-
-    all_samples = []
-
+    
     for label in LABELS:
-        if label not in class_videos:
-            print(f"⚠ Skipping {label} — no video files")
-            continue
-
-        video_files = class_videos[label]
         label_idx = LABEL_TO_IDX[label]
-        label_dir = os.path.join(output_path, label)
-        os.makedirs(label_dir, exist_ok=True)
+        
+        # --- A. Process Videos (with video-level split) ---
+        if label in class_videos:
+            videos = class_videos[label]
+            np.random.shuffle(videos)
+            
+            # Split videos
+            split_idx = int(len(videos) * (1.0 - test_size))
+            train_videos = videos[:split_idx]
+            val_videos = videos[split_idx:]
+            
+            # Extract frames for train videos
+            if train_videos:
+                fpv_train = max(1, int(np.ceil(target_frames / len(videos))))
+                train_dir = os.path.join(output_path, "train", label)
+                os.makedirs(train_dir, exist_ok=True)
+                for video_path in train_videos:
+                    cap = cv2.VideoCapture(str(video_path))
+                    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    if total_frames <= 0:
+                        cap.release()
+                        continue
+                    num_to_extract = min(fpv_train, total_frames)
+                    frame_indices = np.linspace(0, total_frames - 1, num_to_extract, dtype=int)
+                    for idx in frame_indices:
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                        ret, frame = cap.read()
+                        if not ret:
+                            continue
+                        fname = f"train_{label}_{video_path.stem}_f{idx}.jpg"
+                        fpath = os.path.join(train_dir, fname)
+                        cv2.imwrite(fpath, frame)
+                        train_samples.append({
+                            "path": fpath,
+                            "label_idx": label_idx,
+                            "label": label,
+                        })
+                    cap.release()
+                    
+            # Extract frames for val videos
+            if val_videos:
+                fpv_val = max(1, int(np.ceil(target_frames / len(videos))))
+                val_dir = os.path.join(output_path, "val", label)
+                os.makedirs(val_dir, exist_ok=True)
+                for video_path in val_videos:
+                    cap = cv2.VideoCapture(str(video_path))
+                    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    if total_frames <= 0:
+                        cap.release()
+                        continue
+                    num_to_extract = min(fpv_val, total_frames)
+                    frame_indices = np.linspace(0, total_frames - 1, num_to_extract, dtype=int)
+                    for idx in frame_indices:
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                        ret, frame = cap.read()
+                        if not ret:
+                            continue
+                        fname = f"val_{label}_{video_path.stem}_f{idx}.jpg"
+                        fpath = os.path.join(val_dir, fname)
+                        cv2.imwrite(fpath, frame)
+                        val_samples.append({
+                            "path": fpath,
+                            "label_idx": label_idx,
+                            "label": label,
+                        })
+                    cap.release()
+                    
+        # --- B. Process Static Images (with image-level split) ---
+        img_folder = os.path.join(images_path, label)
+        if os.path.exists(img_folder):
+            images = [
+                p for p in Path(img_folder).iterdir()
+                if p.suffix.lower() in IMAGE_EXTENSIONS
+            ]
+            if images:
+                images = sorted(images)
+                # Cap to prevent one class from dominating
+                if len(images) > max_images_per_class:
+                    np.random.shuffle(images)
+                    images = images[:max_images_per_class]
+                else:
+                    np.random.shuffle(images)
+                    
+                split_idx = int(len(images) * (1.0 - test_size))
+                train_images = images[:split_idx]
+                val_images = images[split_idx:]
+                
+                # Add unique static images exactly once
+                for img_path in train_images:
+                    train_samples.append({
+                        "path": str(img_path),
+                        "label_idx": label_idx,
+                        "label": label,
+                    })
+                for img_path in val_images:
+                    val_samples.append({
+                        "path": str(img_path),
+                        "label_idx": label_idx,
+                        "label": label,
+                    })
 
-        # How many frames per video to hit the target
-        fpv = max(1, int(np.ceil(target_frames / len(video_files))))
-        frame_count = 0
-
-        for video_path in video_files:
-            cap = cv2.VideoCapture(str(video_path))
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-            if total_frames <= 0:
-                cap.release()
-                continue
-
-            num_to_extract = min(fpv, total_frames)
-            frame_indices = np.linspace(0, total_frames - 1, num_to_extract, dtype=int)
-
-            for idx in frame_indices:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-                ret, frame = cap.read()
-                if not ret:
-                    continue
-
-                fname = f"{label}_{video_path.stem}_f{idx}.jpg"
-                fpath = os.path.join(label_dir, fname)
-
-                if not os.path.exists(fpath):
-                    cv2.imwrite(fpath, frame)
-
-                all_samples.append({
-                    "path": fpath,
-                    "label_idx": label_idx,
-                    "label": label,
-                })
-                frame_count += 1
-
-            cap.release()
-
-        print(f"✓ {label:<25} {frame_count} frames (from {len(video_files)} videos)")
-
-    print(f"\nTotal frames: {len(all_samples)}")
-    return all_samples
-
-
-
-DEFAULT_IMAGE_WEIGHTS = {
-    "weapon_detected": 3,
-}
-
-
-def collect_images(
-    images_path="simulation/datasets/image",
-    max_per_class=300,
-    class_image_weights=None,
-):
-    """Collect static images from an images dataset directory.
-
-    Drop images into simulation/datasets/image/<label>/ and they will be
-    mixed with the video-extracted frames during training automatically.
-
-    Images are capped at max_per_class per label to prevent domain-
-    mismatched datasets (e.g. Roboflow exports) from overwhelming the
-    video-derived training data.
-
-    class_image_weights : dict[str, int]
-        Per-class repeat multiplier.  Images for a class with weight N
-        will appear N times in the returned sample list, so the sampler
-        draws them more often.  Default weights are merged with any
-        user-supplied overrides.
-    """
-    if not os.path.exists(images_path):
-        return []
-
-    weights = dict(DEFAULT_IMAGE_WEIGHTS)
-    if class_image_weights:
-        weights.update(class_image_weights)
-
-    print("\n🖼  Collecting static images...")
-    print(f"   (capped at {max_per_class} per class)")
-    if weights:
-        print(f"   image emphasis: {weights}")
-    print("-" * 50)
-
-    all_samples = []
-
+    # Summary printing
+    print("\nDataset generation and split complete!")
+    print("-" * 70)
     for label in LABELS:
-        folder = os.path.join(images_path, label)
-        if not os.path.exists(folder):
-            continue
-
-        images = [
-            p for p in Path(folder).iterdir()
-            if p.suffix.lower() in IMAGE_EXTENSIONS
-        ]
-        if not images:
-            continue
-
-        # Cap to prevent one class from dominating
-        if len(images) > max_per_class:
-            np.random.shuffle(images)
-            images = images[:max_per_class]
-
-        repeat = weights.get(label, 1)
-        label_idx = LABEL_TO_IDX[label]
-        for img_path in sorted(images):
-            sample = {
-                "path": str(img_path),
-                "label_idx": label_idx,
-                "label": label,
-            }
-            # Repeat the sample `repeat` times so the sampler sees it more
-            for _ in range(repeat):
-                all_samples.append(sample)
-
-        effective = len(images) * repeat
-        suffix = f" (×{repeat})" if repeat > 1 else ""
-        print(f"✓ {label:<25} {len(images)} images → {effective} samples{suffix}")
-
-    if all_samples:
-        print(f"\nTotal static image samples: {len(all_samples)}")
-    else:
-        print("No images found (folder missing or empty — skipping)")
-
-    return all_samples
+        tr_c = sum(1 for s in train_samples if s["label"] == label)
+        va_c = sum(1 for s in val_samples if s["label"] == label)
+        print(f"✓ {label:<25} Train: {tr_c:>4} | Val: {va_c:>4}")
+        
+    print(f"\nTotal Train samples: {len(train_samples)}")
+    print(f"Total Val samples:   {len(val_samples)}")
+    
+    return train_samples, val_samples
 
 
 # ──────────────────────────────────────────────
@@ -285,8 +272,8 @@ def collect_images(
 # ──────────────────────────────────────────────
 
 def build_model(num_classes: int, freeze_backbone: bool = True):
-    """ResNet18 with a new classification head."""
-    model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+    """ResNet34 with a new classification head."""
+    model = models.resnet34(weights=models.ResNet34_Weights.IMAGENET1K_V1)
 
     if freeze_backbone:
         for param in model.parameters():
@@ -306,9 +293,12 @@ def build_model(num_classes: int, freeze_backbone: bool = True):
 
 
 def unfreeze_backbone(model):
-    """Unfreeze all layers for fine-tuning."""
-    for param in model.parameters():
-        param.requires_grad = True
+    """Unfreeze layer3, layer4, and the head for deeper fine-tuning while keeping low-level layers frozen."""
+    for name, param in model.named_parameters():
+        if "layer3" in name or "layer4" in name or "fc" in name:
+            param.requires_grad = True
+        else:
+            param.requires_grad = False
 
 
 # ──────────────────────────────────────────────
@@ -320,14 +310,14 @@ def train(
     images_path="simulation/datasets/image",
     frames_path="ai_models/visual/classifier_frames",
     save_path="ai_models/visual/saved_model",
-    total_epochs=40,
+    total_epochs=60,
     unfreeze_epoch=15,
     batch_size=32,
     lr_head=0.001,
     lr_finetune=0.0001,
 ):
     print("\n" + "=" * 60)
-    print("   RESNET18 CLASSIFIER — SURVEILLANCE SCENE CLASSIFICATION")
+    print("   RESNET34 CLASSIFIER — SURVEILLANCE SCENE CLASSIFICATION")
     print("=" * 60)
 
     device = torch.device(
@@ -337,64 +327,24 @@ def train(
     )
     print(f"\nUsing device: {device}")
 
-    # ── Extract frames from videos + collect static images ────────
-    # Static images capped per class to prevent domain-mismatched datasets
-    # from overwhelming video-derived training data.  Cap set to 800 so
-    # image-only classes like car_crash (510 images, no videos) get enough
-    # data while not overwhelming video-backed classes (~2400 frames each).
-    #
-    # weapon_detected gets a 3× image weight because the weapon image
-    # dataset (diverse gun/knife photos) is a better source for learning
-    # weapon features than the shooting video frames (chaotic, blurry).
-    all_samples = extract_frames(source_path, frames_path)
-    all_samples += collect_images(images_path, max_per_class=800)
+    # Strict split first
+    train_samples, val_samples = extract_and_split_dataset(
+        source_path, images_path, frames_path, frames_per_video=8, max_images_per_class=800
+    )
 
-    if not all_samples:
+    if not train_samples:
         print("\nNo training data found — add videos to simulation/datasets/video/")
         print("or images to simulation/datasets/image/<label>/")
         return
 
-    # ── Stratified train/val split ─────────────────────────────────
-    labels = [s["label_idx"] for s in all_samples]
-    counts = np.bincount(labels, minlength=NUM_CLASSES)
-    can_stratify = int(counts[counts > 0].min()) >= 2
-
-    if can_stratify:
-        train_samples, val_samples = train_test_split(
-            all_samples, test_size=0.2, random_state=42, stratify=labels,
-        )
-    else:
-        train_samples, val_samples = train_test_split(
-            all_samples, test_size=0.2, random_state=42,
-        )
-
-    print(f"\nTrain samples : {len(train_samples)}")
-    print(f"Val samples   : {len(val_samples)}")
-
-    # ── Class weights ──────────────────────────────────────────────
+    # Train counts
     train_labels = [s["label_idx"] for s in train_samples]
     train_counts = np.bincount(train_labels, minlength=NUM_CLASSES)
 
-    print(f"\nClass distribution (train):")
-    for i, label in enumerate(LABELS):
-        print(f"  {label:<25} {train_counts[i]:>5} frames")
-
-    # Sqrt-inverse-frequency weights
-    class_weights = np.zeros(NUM_CLASSES, dtype=np.float32)
-    for i in range(NUM_CLASSES):
-        if train_counts[i] > 0:
-            class_weights[i] = 1.0 / np.sqrt(train_counts[i])
-    if class_weights.sum() > 0:
-        class_weights = class_weights / class_weights.sum() * NUM_CLASSES
-    class_weights_tensor = torch.tensor(class_weights).to(device)
-
-    print(f"\nClass weights: {dict(zip(LABELS, [f'{w:.2f}' for w in class_weights]))}")
-
     # ── Balanced sampler ───────────────────────────────────────────
-    sample_weights = [
-        1.0 / np.sqrt(max(train_counts[s["label_idx"]], 1))
-        for s in train_samples
-    ]
+    # Use exact inverse-frequency (1.0 / train_counts) to balance batches perfectly!
+    class_weights = [1.0 / max(train_counts[i], 1) for i in range(NUM_CLASSES)]
+    sample_weights = [class_weights[s["label_idx"]] for s in train_samples]
     sampler = WeightedRandomSampler(
         weights=sample_weights,
         num_samples=len(train_samples),
@@ -422,22 +372,22 @@ def train(
     # 0.15 is more aggressive than default 0.1 — trades a small amount
     # of peak accuracy for significantly fewer high-confidence FPs.
     criterion = nn.CrossEntropyLoss(
-        weight=class_weights_tensor,
         label_smoothing=0.15,
     )
 
     # Phase 1: only train the classifier head
-    optimizer = optim.Adam(
+    optimizer = optim.AdamW(
         filter(lambda p: p.requires_grad, model.parameters()),
         lr=lr_head,
+        weight_decay=1e-4,
     )
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", patience=5, factor=0.5,
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=unfreeze_epoch, eta_min=1e-5
     )
 
     best_val_acc = 0.0
     patience_counter = 0
-    patience_limit = 15
+    patience_limit = 20
 
     print(f"\n🚀 Starting training for {total_epochs} epochs...")
     print(f"   Phase 1 (epochs 1–{unfreeze_epoch}): Train classifier head only")
@@ -449,10 +399,11 @@ def train(
         if epoch == unfreeze_epoch:
             print(f"\n🔓 Unfreezing backbone at epoch {epoch + 1}...")
             unfreeze_backbone(model)
-            optimizer = optim.Adam(model.parameters(), lr=lr_finetune)
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer, mode="min", patience=7, factor=0.5,
+            optimizer = optim.AdamW(model.parameters(), lr=lr_finetune, weight_decay=1e-4)
+            scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, T_max=total_epochs - unfreeze_epoch, eta_min=1e-6
             )
+            patience_counter = 0  # Reset early stopping counter for fine-tuning phase
 
         # ── Train ──────────────────────────────────────────────────
         model.train()
@@ -500,7 +451,10 @@ def train(
 
         val_acc = 100.0 * val_correct / val_total
         avg_val_loss = val_loss / len(val_loader)
-        scheduler.step(avg_val_loss)
+        if isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+            scheduler.step(avg_val_loss)
+        else:
+            scheduler.step()
 
         current_lr = optimizer.param_groups[0]["lr"]
         phase = "HEAD" if epoch < unfreeze_epoch else "FULL"
