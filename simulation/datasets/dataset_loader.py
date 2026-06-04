@@ -80,7 +80,6 @@ class VideoDatasetLoader:
             "explosion",
             "car_crash",
             "violence",
-            "robbery",
             "person_down",
             "intrusion_detected",
         ]

@@ -110,11 +110,11 @@ class FusionEngine:
     # with.  If the visual label is NOT in this set the audio prediction is
     # considered unreliable and gets overridden.
     AUDIO_VISUAL_COMPAT = {
-        "gunshot":        {"weapon_detected", "robbery", "violence", "person_down"},
+        "gunshot":        {"weapon_detected", "violence", "person_down"},
         "impact":         {"explosion", "person_down", "car_crash"},
-        "distress_sounds": {"violence", "robbery", "person_down", "intrusion_detected"},
-        "forced_entry":   {"intrusion_detected", "robbery"},
-        "fight_sounds":   {"violence", "person_down", "robbery"},
+        "distress_sounds": {"violence", "person_down", "intrusion_detected"},
+        "forced_entry":   {"intrusion_detected"},
+        "fight_sounds":   {"violence", "person_down"},
         "siren":          {"car_crash", "person_down", "explosion"},
     }
 
@@ -218,7 +218,7 @@ class FusionEngine:
         # fight_sounds and distress_sounds are too generic (TV audio, arguments,
         # loud conversations) and produced many false positives.
         WEAPON_AUDIO   = {"gunshot"}
-        WEAPON_VISUAL  = {"violence", "robbery", "intrusion_detected", "person_down"}
+        WEAPON_VISUAL  = {"violence", "intrusion_detected", "person_down"}
         if a_label in WEAPON_AUDIO and v_label in WEAPON_VISUAL:
             v_label = "weapon_detected"
             v_conf  = max(v_conf, 0.65)
@@ -249,7 +249,7 @@ class FusionEngine:
         severity = "low"
         if alert:
             high = [
-                "weapon_detected", "person_down", "explosion", "robbery",
+                "weapon_detected", "person_down", "explosion",
                 "intrusion_detected", "violence", "gunshot", "distress_sounds",
                 "fight_sounds", "forced_entry", "impact",
             ]

@@ -14,7 +14,6 @@ LABELS = [
     "explosion",
     "car_crash",
     "violence",
-    "robbery",
     "person_down",
     "intrusion_detected",
     # NOTE: suspicious_package is handled by fusion engine's abandoned-object

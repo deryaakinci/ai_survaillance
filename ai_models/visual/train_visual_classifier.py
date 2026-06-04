@@ -10,6 +10,7 @@ import torch.optim as optim
 import numpy as np
 from pathlib import Path
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
+from torch.optim.swa_utils import AveragedModel, update_bn
 from torchvision import models, transforms
 from PIL import Image, ImageFile
 
@@ -26,12 +27,13 @@ LABELS = [
     "explosion",
     "car_crash",
     "violence",
-    "robbery",
     "person_down",
     "intrusion_detected",
     # NOTE: suspicious_package is NOT a classifier class — it is detected
     # by the fusion engine's abandoned-object tracking (COCO bag/suitcase
     # detection + stationary-time + owner-distance logic).
+    # NOTE: robbery is merged into intrusion_detected — visually too similar
+    # to separate reliably.
 ]
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff", ".tif"}
@@ -74,30 +76,40 @@ class FrameDataset(Dataset):
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD  = [0.229, 0.224, 0.225]
 
-# Strong augmentation — each view of the same frame looks different,
-# making memorisation of specific frames much harder.
-train_transform = transforms.Compose([
-    transforms.Resize((256, 256)),
-    transforms.RandomResizedCrop(224, scale=(0.6, 1.0)),
-    transforms.RandomHorizontalFlip(),
-    transforms.RandomRotation(15),
-    transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.2, hue=0.05),
-    transforms.RandomGrayscale(p=0.1),
-    transforms.RandomPerspective(distortion_scale=0.2, p=0.3),
-    transforms.RandomApply(
-        [transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0))], p=0.2
-    ),
-    transforms.ToTensor(),
-    transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-    transforms.RandomErasing(p=0.25, scale=(0.02, 0.25)),
-])
+def make_train_transform(img_size=224):
+    """Strong augmentation with configurable resolution."""
+    resize_to = img_size + 32
+    return transforms.Compose([
+        transforms.Resize((resize_to, resize_to)),
+        transforms.RandomResizedCrop(img_size, scale=(0.6, 1.0)),
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomRotation(15),
+        transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.2, hue=0.05),
+        transforms.RandomGrayscale(p=0.1),
+        transforms.RandomPerspective(distortion_scale=0.2, p=0.3),
+        transforms.RandomApply(
+            [transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0))], p=0.2
+        ),
+        transforms.ToTensor(),
+        transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
+        transforms.RandomErasing(p=0.25, scale=(0.02, 0.25)),
+    ])
 
-val_transform = transforms.Compose([
-    transforms.Resize((256, 256)),
-    transforms.CenterCrop(224),
-    transforms.ToTensor(),
-    transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-])
+
+def make_val_transform(img_size=224):
+    """Deterministic validation transform with configurable resolution."""
+    resize_to = img_size + 32
+    return transforms.Compose([
+        transforms.Resize((resize_to, resize_to)),
+        transforms.CenterCrop(img_size),
+        transforms.ToTensor(),
+        transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
+    ])
+
+
+# Default transforms at 224px (backward compatibility)
+train_transform = make_train_transform(224)
+val_transform = make_val_transform(224)
 
 
 # ──────────────────────────────────────────────
@@ -372,11 +384,15 @@ def build_model(num_classes: int, freeze_backbone: bool = True):
     in_features = model.classifier[1].in_features  # 1280 for EfficientNet-V2-S
     model.classifier = nn.Sequential(
         nn.Dropout(p=0.4),
-        nn.Linear(in_features, 512),
-        nn.BatchNorm1d(512),
+        nn.Linear(in_features, 768),
+        nn.BatchNorm1d(768),
         nn.GELU(),
         nn.Dropout(p=0.3),
-        nn.Linear(512, num_classes),
+        nn.Linear(768, 384),
+        nn.BatchNorm1d(384),
+        nn.GELU(),
+        nn.Dropout(p=0.2),
+        nn.Linear(384, num_classes),
     )
 
     return model
@@ -444,15 +460,17 @@ def train(
         replacement=True,
     )
 
-    # ── Data loaders ───────────────────────────────────────────────
+    # ── Data loaders (start at 224px, bump to 300px at unfreeze) ──
+    curr_train_tf = make_train_transform(224)
+    curr_val_tf = make_val_transform(224)
     train_loader = DataLoader(
-        FrameDataset(train_samples, transform=train_transform),
+        FrameDataset(train_samples, transform=curr_train_tf),
         batch_size=batch_size,
         sampler=sampler,
         num_workers=0,
     )
     val_loader = DataLoader(
-        FrameDataset(val_samples, transform=val_transform),
+        FrameDataset(val_samples, transform=curr_val_tf),
         batch_size=batch_size,
         shuffle=False,
         num_workers=0,
@@ -492,52 +510,25 @@ def train(
 
     best_val_acc = 0.0
     patience_counter = 0
-    patience_limit = 12
+    patience_limit = 20
+    swa_model = None
+    swa_start = 50
 
     print(f"\n🚀 Starting training for {total_epochs} epochs...")
-    print(f"   Phase 1 (epochs 1–{unfreeze_epoch}): Train classifier head only")
-    print(f"   Phase 2 (epochs {unfreeze_epoch+1}+): Fine-tune layer3+layer4+head (MixUp α={mixup_alpha})")
-    print(f"   Regularisation: weight_decay={weight_decay}, label_smoothing=0.05, dropout=0.35")
+    print(f"   Phase 1 (epochs 1–{unfreeze_epoch}): Train classifier head only (224px)")
+    print(f"   Phase 2 (epochs {unfreeze_epoch+1}+): Fine-tune features.3-6+head (300px, MixUp α={mixup_alpha})")
+    print(f"   Scheduler: CosineAnnealingWarmRestarts (T_0=10, T_mult=2)")
+    print(f"   SWA averaging starts at epoch {swa_start+1}")
+    print(f"   Regularisation: weight_decay={weight_decay}, dropout=0.4/0.3/0.2")
     print("=" * 60)
 
     for epoch in range(total_epochs):
         # ── Phase transitions ──────────────────────────────────────
-        mid_phase2_epoch = unfreeze_epoch + (total_epochs - unfreeze_epoch) // 2
-
         if epoch == unfreeze_epoch:
-            print(f"\n🔓 Unfreezing features.4-6 at epoch {epoch + 1}...")
-            unfreeze_backbone(model, include_3=False)
-
-            # 3-tier differential LR: deeper layers adapt slower.
-            deep_params = [
-                p for n, p in model.named_parameters()
-                if "features.4" in n and p.requires_grad
-            ]
-            mid_params = [
-                p for n, p in model.named_parameters()
-                if ("features.5" in n or "features.6" in n) and p.requires_grad
-            ]
-            head_params = [
-                p for n, p in model.named_parameters()
-                if "classifier" in n and p.requires_grad
-            ]
-            optimizer = optim.AdamW([
-                {"params": deep_params, "lr": lr_backbone * 0.2},
-                {"params": mid_params,  "lr": lr_backbone},
-                {"params": head_params, "lr": lr_head_ft},
-            ], weight_decay=weight_decay)
-
-            remaining_epochs = total_epochs - unfreeze_epoch
-            scheduler = optim.lr_scheduler.CosineAnnealingLR(
-                optimizer, T_max=remaining_epochs, eta_min=1e-6
-            )
-            patience_counter = 0
-
-        elif epoch == mid_phase2_epoch:
-            print(f"\n🔓 Unfreezing features.3 at epoch {epoch + 1} (mid-Phase 2)...")
+            print(f"\n🔓 Unfreezing features.3-6 at epoch {epoch + 1}...")
             unfreeze_backbone(model, include_3=True)
 
-            # Add features.3 params at a very low LR — they're far from the head.
+            # 4-tier differential LR: deeper layers adapt slower.
             f3_params = [
                 p for n, p in model.named_parameters()
                 if "features.3" in n and p.requires_grad
@@ -556,15 +547,39 @@ def train(
             ]
             optimizer = optim.AdamW([
                 {"params": f3_params,   "lr": lr_backbone * 0.05},
-                {"params": deep_params, "lr": lr_backbone * 0.1},
-                {"params": mid_params,  "lr": lr_backbone * 0.5},
-                {"params": head_params, "lr": lr_head_ft * 0.5},
+                {"params": deep_params, "lr": lr_backbone * 0.2},
+                {"params": mid_params,  "lr": lr_backbone},
+                {"params": head_params, "lr": lr_head_ft},
             ], weight_decay=weight_decay)
 
-            remaining_epochs = total_epochs - mid_phase2_epoch
-            scheduler = optim.lr_scheduler.CosineAnnealingLR(
-                optimizer, T_max=remaining_epochs, eta_min=1e-6
+            # Warm restarts: T_0=10 gives LR resets at Phase 2 epochs 10, 30
+            # (absolute epochs 25, 45) — right when the ~78% plateau hits.
+            scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                optimizer, T_0=10, T_mult=2, eta_min=1e-6
             )
+            patience_counter = 0
+
+            # Progressive resolution: bump to 300px for better features
+            print(f"   📐 Resolution: 224px → 300px")
+            curr_train_tf = make_train_transform(300)
+            curr_val_tf = make_val_transform(300)
+            train_loader = DataLoader(
+                FrameDataset(train_samples, transform=curr_train_tf),
+                batch_size=batch_size,
+                sampler=sampler,
+                num_workers=0,
+            )
+            val_loader = DataLoader(
+                FrameDataset(val_samples, transform=curr_val_tf),
+                batch_size=batch_size,
+                shuffle=False,
+                num_workers=0,
+            )
+
+        # SWA: start averaging weights after epoch 50
+        if epoch == swa_start:
+            print(f"\n📊 Starting SWA weight averaging at epoch {epoch + 1}...")
+            swa_model = AveragedModel(model).to(device)
 
         # ── Train ──────────────────────────────────────────────────
         model.train()
@@ -603,6 +618,10 @@ def train(
             )
 
         train_acc = 100.0 * train_correct / train_total
+
+        # SWA: accumulate weight average each epoch
+        if swa_model is not None:
+            swa_model.update_parameters(model)
 
         # ── Validate (no MixUp) ────────────────────────────────────
         model.eval()
@@ -668,10 +687,52 @@ def train(
                 json.dump(IDX_TO_LABEL, f)
             print(f"  ✓ Best model saved — val acc: {val_acc:.1f}%")
         else:
-            patience_counter += 1
+            # Don't count patience during SWA — let it finish averaging
+            if swa_model is None:
+                patience_counter += 1
             if patience_counter >= patience_limit:
                 print(f"\n⏹ Early stopping at epoch {epoch + 1} (no improvement for {patience_limit} epochs)")
                 break
+
+    # ── SWA finalization ──────────────────────────────────────────
+    if swa_model is not None:
+        print("\n📊 Finalizing SWA model (updating batch norm statistics)...")
+        update_bn(train_loader, swa_model, device=device)
+
+        # Evaluate SWA model on validation set
+        swa_model.eval()
+        swa_correct = 0
+        swa_total = 0
+        swa_preds = []
+        swa_targets = []
+        with torch.no_grad():
+            for images, labels in val_loader:
+                images, labels = images.to(device), labels.to(device)
+                outputs = swa_model(images)
+                _, predicted = outputs.max(1)
+                swa_total += labels.size(0)
+                swa_correct += predicted.eq(labels).sum().item()
+                swa_preds.extend(predicted.cpu().numpy())
+                swa_targets.extend(labels.cpu().numpy())
+        swa_acc = 100.0 * swa_correct / swa_total
+        print(f"   SWA val accuracy: {swa_acc:.1f}% (best regular: {best_val_acc:.1f}%)")
+
+        # Per-class SWA breakdown
+        preds_np = np.array(swa_preds)
+        targets_np = np.array(swa_targets)
+        print(f"\n  Per-class SWA val accuracy:")
+        for i, label in enumerate(LABELS):
+            mask = targets_np == i
+            if mask.sum() > 0:
+                acc = 100.0 * (preds_np[mask] == i).sum() / mask.sum()
+                print(f"    {label:<25} {acc:5.1f}%  ({int(mask.sum())} samples)")
+
+        if swa_acc > best_val_acc:
+            best_val_acc = swa_acc
+            torch.save(swa_model.module.state_dict(), f"{save_path}/best_classifier.pth")
+            print(f"\n   ✓ SWA model saved — val acc: {swa_acc:.1f}%")
+        else:
+            print(f"\n   Regular model was better — keeping best checkpoint")
 
     print("=" * 60)
     print(f"Training complete!")

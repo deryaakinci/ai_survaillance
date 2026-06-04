@@ -22,7 +22,6 @@ class AlertsScreen extends StatelessWidget {
       'explosion':          '🚨 Explosion detected',
       'car_crash':  '⚠️ Car crash',
       'violence':           '🚨 Violence detected',
-      'robbery':            '🚨 Robbery in progress',
       'person_down':        '🚨 Person down',
       'intrusion_detected': '🚨 Intrusion detected',
       'suspicious_package': '⚠️ Suspicious package',

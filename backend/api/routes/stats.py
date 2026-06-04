@@ -104,7 +104,7 @@ def get_stats_overview(
     type_keys = [
         "gunshot", "impact", "distress_sounds", "forced_entry", "fight_sounds", "siren",
         "weapon_detected", "explosion", "car_crash", "violence",
-        "robbery", "person_down", "intrusion_detected", "suspicious_package",
+        "person_down", "intrusion_detected", "suspicious_package",
     ]
 
     alert_types = {}

@@ -172,7 +172,6 @@ class AnalyticsScreen extends StatelessWidget {
     'explosion':          Color(0xFFD85A30),
     'car_crash':  Color(0xFF85B7EB),
     'violence':           Color(0xFF7F77DD),
-    'robbery':            Color(0xFF5DCAA5),
     'person_down':        Color(0xFFEF9F27),
     'intrusion_detected': Color(0xFF1D9E75),
     'suspicious_package': Color(0xFF5DCAA5),

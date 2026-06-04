@@ -3,26 +3,18 @@ from ai_models.visual.visual_model import VisualAnomalyDetector
 from ai_models.fusion.fusion_engine import FusionEngine
 from ai_models.fusion.alert_logic import AlertLogic
 from simulation.scenarios import (
-    normal, gunshot, explosion, scream,
-    glass_break,
-    crying_distress, fight_sounds,
-    siren, car_crash,
+    normal, gunshot, explosion,
+    car_crash,
     intruder_detected, weapon_detected,
-    visual_explosion,
-    abuse, fighting, assault,
-    robbery, person_down,
+    person_down,
     forced_entry, suspicious_package,
 )
 
 ALL_SCENARIOS = [
-    normal, gunshot, explosion, scream,
-    glass_break,
-    crying_distress, fight_sounds,
-    siren, car_crash,
+    normal, gunshot, explosion,
+    car_crash,
     intruder_detected, weapon_detected,
-    visual_explosion,
-    abuse, fighting, assault,
-    robbery, person_down,
+    person_down,
     forced_entry, suspicious_package,
 ]
 

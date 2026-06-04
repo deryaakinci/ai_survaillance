@@ -150,7 +150,6 @@ def _get_title(audio_label: str, severity: str, visual_label: str = "normal") ->
         "explosion":         "Explosion detected",
         "car_crash":         "Car crash",
         "violence":          "Violence detected",
-        "robbery":           "Robbery in progress",
         "person_down":       "Person down",
         "intrusion_detected":"Intrusion detected",
         "suspicious_package":"Suspicious package",

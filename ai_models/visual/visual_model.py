@@ -13,10 +13,8 @@ LABELS = [
     "explosion",
     "car_crash",
     "violence",
-    "robbery",
     "person_down",
     "intrusion_detected",
- 
 ]
 
 CLASSIFIER_MODEL_PATH = "ai_models/visual/saved_model/best_classifier.pth"
@@ -32,8 +30,8 @@ IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD  = [0.229, 0.224, 0.225]
 
 _inference_transform = transforms.Compose([
-    transforms.Resize((256, 256)),
-    transforms.CenterCrop(224),
+    transforms.Resize((332, 332)),
+    transforms.CenterCrop(300),
     transforms.ToTensor(),
     transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
 ])
@@ -45,11 +43,15 @@ def _build_classifier(num_classes: int):
     in_features = model.classifier[1].in_features  # 1280 for EfficientNet-V2-S
     model.classifier = nn.Sequential(
         nn.Dropout(p=0.4),
-        nn.Linear(in_features, 512),
-        nn.BatchNorm1d(512),
+        nn.Linear(in_features, 768),
+        nn.BatchNorm1d(768),
         nn.GELU(),
         nn.Dropout(p=0.3),
-        nn.Linear(512, num_classes),
+        nn.Linear(768, 384),
+        nn.BatchNorm1d(384),
+        nn.GELU(),
+        nn.Dropout(p=0.2),
+        nn.Linear(384, num_classes),
     )
     return model
 
@@ -60,7 +62,7 @@ class VisualAnomalyDetector:
 
     HIGH_PRIORITY_LABELS = {
         "weapon_detected", "explosion", "person_down",
-        "intrusion_detected", "violence", "robbery",
+        "intrusion_detected", "violence",
     }
 
     # Consecutive frames weapon_detected must appear before firing the alert.
@@ -104,7 +106,7 @@ class VisualAnomalyDetector:
     # ── Public entry point ────────────────────────────────────────────
 
     def predict(self, frame) -> dict:
-        resnet_result = self._run_resnet(frame)
+        resnet_result = self._run_resnet_tta(frame)
         # weapon_hit  = self._run_weapon_scan(frame)  # YOLO knife detection
         weapon_hit    = None
 
@@ -210,7 +212,50 @@ class VisualAnomalyDetector:
 
         return {"label": top1_label, "confidence": round(top1_conf, 3)}
 
-    
+    def _run_resnet_tta(self, frame) -> dict | None:
+        """Test-Time Augmentation: average softmax over 5 views for robustness.
+
+        Views: original, horizontal flip, two corner crops, slight rotation.
+        Breaks ties on ambiguous classes (robbery/intrusion, weapon/normal).
+        """
+        if self.resnet is None:
+            return None
+
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        img = Image.fromarray(frame_rgb)
+
+        # Build 5 augmented views
+        views = [_inference_transform(img)]
+        views.append(_inference_transform(img.transpose(Image.FLIP_LEFT_RIGHT)))
+        w, h = img.size
+        margin_w, margin_h = int(w * 0.06), int(h * 0.06)
+        views.append(_inference_transform(img.crop((margin_w, margin_h, w, h))))
+        views.append(_inference_transform(img.crop((0, 0, w - margin_w, h - margin_h))))
+        views.append(_inference_transform(img.rotate(5, expand=False, fillcolor=(128, 128, 128))))
+
+        batch = torch.stack(views).to(self.device)
+
+        with torch.no_grad():
+            output = self.resnet(batch)
+            probs = torch.softmax(output, dim=1)
+            avg_probs = probs.mean(dim=0, keepdim=True)
+
+        top2_probs, top2_idx = avg_probs.topk(2, dim=1)
+        top1_conf  = float(top2_probs[0][0])
+        top1_label = LABELS[int(top2_idx[0][0])]
+        top2_conf  = float(top2_probs[0][1])
+        top2_label = LABELS[int(top2_idx[0][1])]
+
+        if top1_label == "normal":
+            if top1_conf < 0.40 and top2_label != "normal" and top2_conf > MIN_CONFIDENCE:
+                return {"label": top2_label, "confidence": round(top2_conf * 0.85, 3)}
+            return {"label": "normal", "confidence": round(top1_conf, 3)}
+
+        if top1_conf < MIN_CONFIDENCE:
+            return {"label": "normal", "confidence": round(1.0 - top1_conf, 3)}
+
+        return {"label": top1_label, "confidence": round(top1_conf, 3)}
+
 
     def _ensemble(self, yolo: dict, resnet: dict) -> dict:
         y_label = yolo["label"]
@@ -299,7 +344,7 @@ class VisualAnomalyDetector:
         Fallback: base yolov8n outputs COCO classes.
         Only map detections that COCO can reliably identify — weapons,
         vehicles, and suspicious packages.  Action-based classes like
-        violence, robbery, explosion are left to the fine-tuned model
+        violence, explosion are left to the fine-tuned model
         and ResNet since COCO cannot detect actions.
         """
      
@@ -379,7 +424,7 @@ class VisualAnomalyDetector:
     def get_severity(self, label: str) -> str:
         high = [
             "weapon_detected", "person_down", "explosion",
-            "robbery", "intrusion_detected", "violence",
+            "intrusion_detected", "violence",
         ]
         medium = [
             "car_crash",
