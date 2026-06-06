@@ -49,9 +49,12 @@ IDX_TO_LABEL = {idx: label for idx, label in enumerate(LABELS)}
 class FrameDataset(Dataset):
     """Dataset of (image_path, label_idx) pairs with on-the-fly transforms."""
 
-    def __init__(self, samples: list, transform=None):
+    def __init__(self, samples: list, transform=None,
+                 gentle_transform=None, gentle_classes=None):
         self.samples = samples      # list of {"path": str, "label_idx": int}
         self.transform = transform
+        self.gentle_transform = gentle_transform
+        self.gentle_classes = gentle_classes or set()
 
     def __len__(self):
         return len(self.samples)
@@ -63,9 +66,14 @@ class FrameDataset(Dataset):
         except (OSError, IOError):
             # Return a grey placeholder if the file is corrupt/truncated
             img = Image.new("RGB", (224, 224), (128, 128, 128))
-        if self.transform:
+        # Use gentler augmentation for small-object classes (e.g. weapons)
+        if self.gentle_transform and item["label_idx"] in self.gentle_classes:
+            img = self.gentle_transform(img)
+        elif self.transform:
             img = self.transform(img)
-        label = torch.tensor(item["label_idx"], dtype=torch.long)
+        # Multi-hot label vector for multi-label classification
+        label = torch.zeros(NUM_CLASSES, dtype=torch.float32)
+        label[item["label_idx"]] = 1.0
         return img, label
 
 
@@ -107,6 +115,28 @@ def make_val_transform(img_size=224):
     ])
 
 
+def make_train_transform_gentle(img_size=224):
+    """Gentler augmentation for small-object classes like weapons.
+
+    Avoids RandomPerspective (distorts small shapes) and aggressive crops
+    that might cut weapons out of frame.  Keeps mild RandomErasing
+    (low p, small scale) for regularisation without masking entire weapons.
+    """
+    resize_to = img_size + 32
+    return transforms.Compose([
+        transforms.Resize((resize_to, resize_to)),
+        transforms.RandomResizedCrop(img_size, scale=(0.75, 1.0)),
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomRotation(10),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.15, hue=0.03),
+        transforms.RandomGrayscale(p=0.05),
+        transforms.ToTensor(),
+        transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
+        transforms.RandomErasing(p=0.1, scale=(0.02, 0.12)),  # mild — won't mask whole weapon
+        # No RandomPerspective — distorts fine weapon details
+    ])
+
+
 # Default transforms at 224px (backward compatibility)
 train_transform = make_train_transform(224)
 val_transform = make_val_transform(224)
@@ -126,7 +156,7 @@ val_transform = make_val_transform(224)
 #  instead of scene-specific details (backgrounds, camera angles).
 
 def mixup_data(x, y, alpha=0.4):
-    """Apply MixUp: blend two random images with a Beta-distributed weight."""
+    """Apply MixUp: blend two random images and their multi-hot label vectors."""
     if alpha > 0:
         lam = np.random.beta(alpha, alpha)
     else:
@@ -139,31 +169,32 @@ def mixup_data(x, y, alpha=0.4):
     index = torch.randperm(batch_size).to(x.device)
 
     mixed_x = lam * x + (1.0 - lam) * x[index]
-    y_a, y_b = y, y[index]
-    return mixed_x, y_a, y_b, lam
+    mixed_y = lam * y + (1.0 - lam) * y[index]
+    return mixed_x, mixed_y, lam
 
 
-def mixup_criterion(criterion, pred, y_a, y_b, lam):
-    """Weighted loss for MixUp blended labels."""
-    return lam * criterion(pred, y_a) + (1.0 - lam) * criterion(pred, y_b)
+class FocalBCELoss(nn.Module):
+    """Focal loss with BCE for multi-label classification.
 
-
-class FocalLoss(nn.Module):
-    def __init__(self, alpha=None, gamma=2.0, label_smoothing=0.1):
+    Uses pos_weight to handle class imbalance — higher weights for
+    rare classes increase the loss when the model misses a positive.
+    """
+    def __init__(self, pos_weight=None, gamma=2.0, label_smoothing=0.0):
         super().__init__()
-        self.alpha = alpha
+        self.pos_weight = pos_weight
         self.gamma = gamma
         self.label_smoothing = label_smoothing
 
     def forward(self, inputs, targets):
-        ce = nn.functional.cross_entropy(
+        if self.label_smoothing > 0:
+            targets = targets * (1 - self.label_smoothing) + 0.5 * self.label_smoothing
+        bce = nn.functional.binary_cross_entropy_with_logits(
             inputs, targets,
-            weight=self.alpha,
-            label_smoothing=self.label_smoothing,
+            pos_weight=self.pos_weight,
             reduction='none',
         )
-        pt = torch.exp(-ce)
-        return ((1 - pt) ** self.gamma * ce).mean()
+        pt = torch.exp(-bce)
+        return ((1 - pt) ** self.gamma * bce).mean()
 
 
 def cutmix_data(x, y, alpha=1.0):
@@ -190,7 +221,8 @@ def cutmix_data(x, y, alpha=1.0):
     x = x.clone()
     x[:, :, bby1:bby2, bbx1:bbx2] = x[index, :, bby1:bby2, bbx1:bbx2]
     lam = 1.0 - (bbx2 - bbx1) * (bby2 - bby1) / (W * H)
-    return x, y, y[index], lam
+    mixed_y = lam * y + (1.0 - lam) * y[index]
+    return x, mixed_y, lam
 
 
 # ──────────────────────────────────────────────
@@ -247,9 +279,9 @@ def extract_and_split_dataset(
     max_videos = max(len(v) for v in class_videos.values()) if class_videos else 0
     target_frames = max_videos * frames_per_video
 
-    # Weapon videos are short trimmed clips — cap FPV to avoid near-duplicate frames
-    # from the same scene, but 18 gives more starting-point variety across 50 videos.
-    MAX_FPV = {"weapon_detected": 18}
+    # Weapon videos are short trimmed clips — data is reliable, but too many
+    # frames from short clips creates near-duplicates that are easy to memorise.
+    MAX_FPV = {"weapon_detected": 22}
 
     for label in LABELS:
         label_idx = LABEL_TO_IDX[label]
@@ -421,9 +453,9 @@ def train(
     unfreeze_epoch=15,
     batch_size=32,
     lr_head=1e-3,
-    lr_backbone=8e-5,
+    lr_backbone=5e-5,
     lr_head_ft=4e-5,
-    weight_decay=0.01,
+    weight_decay=0.02,
     mixup_alpha=0.3,
 ):
     print("\n" + "=" * 60)
@@ -453,6 +485,9 @@ def train(
     train_counts = np.bincount(train_labels, minlength=NUM_CLASSES)
 
     class_weights = [1.0 / max(train_counts[i], 1) for i in range(NUM_CLASSES)]
+    # Weapons: small-object scene-level detection — 3x oversample for sufficient gradient
+    weapon_idx = LABEL_TO_IDX["weapon_detected"]
+    class_weights[weapon_idx] *= 3.0
     sample_weights = [class_weights[s["label_idx"]] for s in train_samples]
     sampler = WeightedRandomSampler(
         weights=sample_weights,
@@ -461,10 +496,14 @@ def train(
     )
 
     # ── Data loaders (start at 224px, bump to 300px at unfreeze) ──
+    weapon_classes = {LABEL_TO_IDX["weapon_detected"]}
     curr_train_tf = make_train_transform(224)
+    curr_train_gentle = make_train_transform_gentle(224)
     curr_val_tf = make_val_transform(224)
     train_loader = DataLoader(
-        FrameDataset(train_samples, transform=curr_train_tf),
+        FrameDataset(train_samples, transform=curr_train_tf,
+                     gentle_transform=curr_train_gentle,
+                     gentle_classes=weapon_classes),
         batch_size=batch_size,
         sampler=sampler,
         num_workers=0,
@@ -488,12 +527,14 @@ def train(
         np.sqrt(median_count / max(train_counts[i], 1))
         for i in range(NUM_CLASSES)
     ], dtype=torch.float32).to(device)
+    # Weapons: guns + knives hard to distinguish at scene level — strong gradient needed
+    loss_weights[weapon_idx] *= 3.0
     print(f"\n📊 Class weights for loss:")
     for i, label in enumerate(LABELS):
         print(f"   {label:<25} count={train_counts[i]:>5}  weight={loss_weights[i]:.2f}")
 
-    criterion = FocalLoss(
-        alpha=loss_weights,
+    criterion = FocalBCELoss(
+        pos_weight=loss_weights,
         gamma=1.5,
         label_smoothing=0.0,
     )
@@ -528,8 +569,9 @@ def train(
             print(f"\n🔓 Unfreezing features.3-6 at epoch {epoch + 1}...")
             unfreeze_backbone(model, include_3=True)
 
-            # 4-tier differential LR: deeper layers adapt slower.
-            f3_params = [
+            # 4-tier differential LR: features.3 at very low LR (early layer, needs
+            # careful fine-tuning), features.4 slightly higher, 5-6 at backbone LR.
+            earliest_params = [
                 p for n, p in model.named_parameters()
                 if "features.3" in n and p.requires_grad
             ]
@@ -546,7 +588,7 @@ def train(
                 if "classifier" in n and p.requires_grad
             ]
             optimizer = optim.AdamW([
-                {"params": f3_params,   "lr": lr_backbone * 0.05},
+                {"params": earliest_params, "lr": lr_backbone * 0.05},
                 {"params": deep_params, "lr": lr_backbone * 0.2},
                 {"params": mid_params,  "lr": lr_backbone},
                 {"params": head_params, "lr": lr_head_ft},
@@ -562,9 +604,12 @@ def train(
             # Progressive resolution: bump to 300px for better features
             print(f"   📐 Resolution: 224px → 300px")
             curr_train_tf = make_train_transform(300)
+            curr_train_gentle = make_train_transform_gentle(300)
             curr_val_tf = make_val_transform(300)
             train_loader = DataLoader(
-                FrameDataset(train_samples, transform=curr_train_tf),
+                FrameDataset(train_samples, transform=curr_train_tf,
+                             gentle_transform=curr_train_gentle,
+                             gentle_classes=weapon_classes),
                 batch_size=batch_size,
                 sampler=sampler,
                 num_workers=0,
@@ -593,29 +638,36 @@ def train(
 
             # MixUp/CutMix only in Phase 2 — the frozen-backbone head needs
             # clean class signals to learn decision boundaries first.
+            # Gentler mixing when weapons are in the batch (lower alpha preserves
+            # weapon features while still regularising against memorisation).
             if epoch >= unfreeze_epoch:
-                if np.random.rand() < 0.5:
-                    mixed_images, y_a, y_b, lam = mixup_data(images, labels, alpha=mixup_alpha)
+                has_weapons = (labels[:, weapon_idx] > 0.5).any()
+                if has_weapons:
+                    # Skip mixing entirely for weapon batches — even low alpha blurs
+                    # fine-grained shape/texture features the model needs for guns/knives.
+                    mixed_images, mixed_labels, lam = images, labels, 1.0
+                elif np.random.rand() < 0.5:
+                    mixed_images, mixed_labels, lam = mixup_data(images, labels, alpha=mixup_alpha)
                 else:
-                    mixed_images, y_a, y_b, lam = cutmix_data(images, labels, alpha=1.0)
+                    mixed_images, mixed_labels, lam = cutmix_data(images, labels, alpha=mixup_alpha)
             else:
-                mixed_images, y_a, y_b, lam = images, labels, labels, 1.0
+                mixed_images, mixed_labels, lam = images, labels, 1.0
 
             optimizer.zero_grad()
             outputs = model(mixed_images)
-            loss = mixup_criterion(criterion, outputs, y_a, y_b, lam)
+            loss = criterion(outputs, mixed_labels)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
             train_loss += loss.item()
-            # Approximate accuracy using the dominant label
-            _, predicted = outputs.max(1)
+            # Approximate accuracy: argmax of sigmoid vs argmax of target
+            with torch.no_grad():
+                preds = torch.sigmoid(outputs)
+            _, predicted = preds.max(1)
+            _, true_class = mixed_labels.max(1)
             train_total += labels.size(0)
-            train_correct += (
-                lam * predicted.eq(y_a).sum().item()
-                + (1.0 - lam) * predicted.eq(y_b).sum().item()
-            )
+            train_correct += predicted.eq(true_class).sum().item()
 
         train_acc = 100.0 * train_correct / train_total
 
@@ -640,11 +692,13 @@ def train(
                 loss = criterion(outputs, labels)
 
                 val_loss += loss.item()
-                _, predicted = outputs.max(1)
+                preds = torch.sigmoid(outputs)
+                _, predicted = preds.max(1)
+                _, true_class = labels.max(1)
                 val_total += labels.size(0)
-                val_correct += predicted.eq(labels).sum().item()
+                val_correct += predicted.eq(true_class).sum().item()
                 val_preds.extend(predicted.cpu().numpy())
-                val_targets.extend(labels.cpu().numpy())
+                val_targets.extend(true_class.cpu().numpy())
 
         val_acc = 100.0 * val_correct / val_total
         avg_val_loss = val_loss / len(val_loader)
@@ -709,11 +763,13 @@ def train(
             for images, labels in val_loader:
                 images, labels = images.to(device), labels.to(device)
                 outputs = swa_model(images)
-                _, predicted = outputs.max(1)
+                preds = torch.sigmoid(outputs)
+                _, predicted = preds.max(1)
+                _, true_class = labels.max(1)
                 swa_total += labels.size(0)
-                swa_correct += predicted.eq(labels).sum().item()
+                swa_correct += predicted.eq(true_class).sum().item()
                 swa_preds.extend(predicted.cpu().numpy())
-                swa_targets.extend(labels.cpu().numpy())
+                swa_targets.extend(true_class.cpu().numpy())
         swa_acc = 100.0 * swa_correct / swa_total
         print(f"   SWA val accuracy: {swa_acc:.1f}% (best regular: {best_val_acc:.1f}%)")
 
@@ -793,7 +849,7 @@ def evaluate(
 
         with torch.no_grad():
             output = model(tensor)
-            probs = torch.softmax(output, dim=1)
+            probs = torch.sigmoid(output)
             confidence, pred_idx = probs.max(1)
             predicted = LABELS[pred_idx.item()]
 

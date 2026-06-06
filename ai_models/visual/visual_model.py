@@ -19,10 +19,22 @@ LABELS = [
 
 CLASSIFIER_MODEL_PATH = "ai_models/visual/saved_model/best_classifier.pth"
 FINETUNED_YOLO_PATH   = "ai_models/visual/saved_model/surveillance_model/weights/best.pt"
+WEAPON_YOLO_PATH      = "ai_models/visual/saved_model/weapon_detector/weights/best.pt"
 FALLBACK_MODEL_PATH   = "yolov8n.pt"
 
-# Minimum confidence to report an anomaly — below this we say "normal"
+# Default minimum confidence to report an anomaly
 MIN_CONFIDENCE = 0.55
+# Per-class overrides — weapon uses lower threshold because the 3-frame streak filter
+# already guards against false positives; higher recall matters more here.
+CLASS_THRESHOLDS = {
+    "weapon_detected": 0.42,
+}
+
+# Priority order for multi-label: most critical threats reported first
+PRIORITY_ORDER = [
+    "weapon_detected", "explosion", "person_down",
+    "violence", "intrusion_detected", "car_crash",
+]
 
 
 # ── ImageNet normalisation (must match training) ──────────────────────
@@ -70,9 +82,10 @@ class VisualAnomalyDetector:
     _WEAPON_REQUIRED_FRAMES = 3
 
     def __init__(self):
-        self.resnet  = None
-        self.yolo    = None
-        self.yolo_base = None
+        self.resnet      = None
+        self.yolo        = None
+        self.yolo_base   = None
+        self.weapon_yolo = None
         self._weapon_streak = 0
         self.device = torch.device(
             "mps" if torch.backends.mps.is_available()
@@ -87,50 +100,78 @@ class VisualAnomalyDetector:
                 torch.load(CLASSIFIER_MODEL_PATH, map_location=self.device)
             )
             self.resnet.eval()
-            print(f"[VisualAnomalyDetector] ResNet18 loaded from {CLASSIFIER_MODEL_PATH}")
+            print(f"[VisualAnomalyDetector] EfficientNet-V2-S loaded from {CLASSIFIER_MODEL_PATH}")
         else:
-            print("[VisualAnomalyDetector] ResNet18 not found — run train_visual_classifier.py")
+            print("[VisualAnomalyDetector] EfficientNet-V2-S not found — run train_visual_classifier.py")
 
-        # ── Load base YOLO for COCO knife detection ───────────────────
-        # try:
-        #     from ultralytics import YOLO as _YOLO
-        #     self.yolo_base = _YOLO(FALLBACK_MODEL_PATH)
-        #     print("[VisualAnomalyDetector] Base YOLO loaded for COCO knife detection")
-        #
-        #     if os.path.exists(FINETUNED_YOLO_PATH):
-        #         self.yolo = _YOLO(FINETUNED_YOLO_PATH)
-        #         print(f"[VisualAnomalyDetector] Fine-tuned YOLO loaded from {FINETUNED_YOLO_PATH}")
-        # except ImportError:
-        #     print("[VisualAnomalyDetector] ultralytics not installed — YOLO knife detection unavailable")
+        # ── Load YOLO models ──────────────────────────────────────────
+        try:
+            from ultralytics import YOLO as _YOLO
+            self.yolo_base = _YOLO(FALLBACK_MODEL_PATH)
+            print("[VisualAnomalyDetector] Base YOLO loaded (COCO knife detection)")
+
+            # Dedicated weapon detector (guns + knives) — train with:
+            #   yolo detect train model=yolov8n.pt data=weapon_data.yaml epochs=50
+            if os.path.exists(WEAPON_YOLO_PATH):
+                self.weapon_yolo = _YOLO(WEAPON_YOLO_PATH)
+                print(f"[VisualAnomalyDetector] Weapon YOLO loaded from {WEAPON_YOLO_PATH}")
+            else:
+                print("[VisualAnomalyDetector] No weapon YOLO found — gun detection via EfficientNet only")
+
+            if os.path.exists(FINETUNED_YOLO_PATH):
+                self.yolo = _YOLO(FINETUNED_YOLO_PATH)
+                print(f"[VisualAnomalyDetector] Fine-tuned YOLO loaded from {FINETUNED_YOLO_PATH}")
+        except ImportError:
+            print("[VisualAnomalyDetector] ultralytics not installed — YOLO unavailable")
 
     # ── Public entry point ────────────────────────────────────────────
 
     def predict(self, frame) -> dict:
         resnet_result = self._run_resnet_tta(frame)
-        # weapon_hit  = self._run_weapon_scan(frame)  # YOLO knife detection
-        weapon_hit    = None
+        weapon_hit    = self._run_weapon_scan(frame)
 
         r_label = resnet_result["label"]       if resnet_result else "normal"
         r_conf  = resnet_result["confidence"]  if resnet_result else 0.0
+        detections = resnet_result.get("detections", []) if resnet_result else []
 
-        # YOLO knife hit: suppress only when ResNet is confidently normal
+        # YOLO knife hit: suppress only when classifier is confidently normal
         # and we haven't built a streak yet (kitchen-scene false-positive guard).
         yolo_weapon = (
             weapon_hit is not None
             and not (r_label == "normal" and r_conf >= 0.45
                      and self._weapon_streak < self._WEAPON_REQUIRED_FRAMES)
         )
-        # Classifier weapon hit: covers guns and any weapon the model learned.
-        classifier_weapon = (r_label == "weapon_detected" and r_conf >= MIN_CONFIDENCE)
+        # Classifier weapon hit: check ALL multi-label detections, not just
+        # primary.  A frame labelled "violence" (primary) may also detect
+        # "weapon_detected" as secondary — the streak should still count.
+        weapon_detection = next(
+            ((label, conf) for label, conf in detections
+             if label == "weapon_detected"),
+            None,
+        )
+        classifier_weapon = weapon_detection is not None
+        # Don't build streak when weapon is clearly secondary to a dominant anomaly
+        # (e.g. violence=0.75, weapon=0.48 → this is a violence scene, not weapon)
+        if classifier_weapon and weapon_detection is not None:
+            max_other_conf = max(
+                (c for l, c in detections if l != "weapon_detected"), default=0.0
+            )
+            if weapon_detection[1] < max_other_conf - 0.15:
+                classifier_weapon = False
 
         if yolo_weapon or classifier_weapon:
             conf = max(
                 weapon_hit["confidence"] if yolo_weapon and weapon_hit else 0.0,
-                r_conf if classifier_weapon else 0.0,
+                weapon_detection[1] if classifier_weapon else 0.0,
             )
             self._weapon_streak += 1
             if self._weapon_streak >= self._WEAPON_REQUIRED_FRAMES:
                 return {"label": "weapon_detected", "confidence": round(conf, 3)}
+            # Streak building — return other detected anomaly if available
+            # (e.g. show "violence" while weapon streak is building)
+            non_weapon = [d for d in detections if d[0] != "weapon_detected"]
+            if non_weapon:
+                return {"label": non_weapon[0][0], "confidence": round(non_weapon[0][1], 3)}
             return {"label": "normal", "confidence": round(1.0 - conf, 3)}
 
         self._weapon_streak = 0
@@ -138,25 +179,37 @@ class VisualAnomalyDetector:
         if resnet_result is None:
             return {"label": "normal", "confidence": 0.0}
 
-        # Classifier said weapon_detected but didn't meet confidence threshold — suppress.
-        if r_label == "weapon_detected":
-            return {"label": "normal", "confidence": round(1.0 - r_conf, 3)}
-
-        if r_label != "normal" and r_conf < MIN_CONFIDENCE:
-            return {"label": "normal", "confidence": round(1.0 - r_conf, 3)}
+        if resnet_result["label"] == "normal":
+            return {"label": "normal", "confidence": resnet_result["confidence"]}
 
         return resnet_result
 
 
     def _run_weapon_scan(self, frame) -> dict | None:
-        """Use base YOLO (COCO-pretrained) to detect weapons.
-        This preserves YOLO's strong weapon knowledge even after fine-tuning.
-        Only fires on high-confidence knife detections to avoid FPs."""
+        """Detect weapons (guns + knives) using available YOLO models.
+
+        Priority:
+          1. Dedicated weapon YOLO (guns + knives) — used when trained and available
+          2. Base COCO YOLO — knife-only fallback
+        """
+        # ── 1. Dedicated weapon detector (guns + knives) ──────────────
+        if self.weapon_yolo is not None:
+            results = self.weapon_yolo(frame, verbose=False, conf=0.45)
+            best_conf = 0.0
+            for result in results:
+                for box in result.boxes:
+                    confidence = float(box.conf[0])
+                    if confidence > best_conf:
+                        best_conf = confidence
+            if best_conf >= 0.45:
+                return {"label": "weapon_detected", "confidence": round(best_conf, 3)}
+            return None
+
+        # ── 2. Base COCO YOLO — knife only ────────────────────────────
         if self.yolo_base is None:
             return None
 
-        results = self.yolo_base(frame, verbose=False, conf=0.55)
-
+        results = self.yolo_base(frame, verbose=False, conf=0.50)
         best_conf = 0.0
         for result in results:
             for box in result.boxes:
@@ -166,8 +219,7 @@ class VisualAnomalyDetector:
                 if label in self.WEAPON_COCO_LABELS and confidence > best_conf:
                     best_conf = confidence
 
-        if best_conf > 0.55:
-           
+        if best_conf >= 0.50:
             return {"label": "weapon_detected", "confidence": round(best_conf, 3)}
 
         return None
@@ -184,6 +236,7 @@ class VisualAnomalyDetector:
         return None
 
     def _run_resnet(self, frame) -> dict | None:
+        """Single-view classifier inference (no TTA)."""
         if self.resnet is None:
             return None
 
@@ -193,30 +246,51 @@ class VisualAnomalyDetector:
 
         with torch.no_grad():
             output = self.resnet(tensor)
-            probs  = torch.softmax(output, dim=1)
+            probs = torch.sigmoid(output)
 
-        top2_probs, top2_idx = probs.topk(2, dim=1)
-        top1_conf  = float(top2_probs[0][0])
-        top1_label = LABELS[int(top2_idx[0][0])]
-        top2_conf  = float(top2_probs[0][1])
-        top2_label = LABELS[int(top2_idx[0][1])]
+        avg_probs = probs[0]  # (NUM_CLASSES,)
 
-        if top1_label == "normal":
-           
-            if top1_conf < 0.40 and top2_label != "normal" and top2_conf > MIN_CONFIDENCE:
-                return {"label": top2_label, "confidence": round(top2_conf * 0.85, 3)}
-            return {"label": "normal", "confidence": round(top1_conf, 3)}
+        normal_conf = float(avg_probs[LABELS.index("normal")])
 
-        if top1_conf < MIN_CONFIDENCE:
-            return {"label": "normal", "confidence": round(1.0 - top1_conf, 3)}
+        # Multi-label: find all anomaly classes above their per-class threshold
+        active_anomalies = []
+        for i, label in enumerate(LABELS):
+            if label == "normal":
+                continue
+            conf = float(avg_probs[i])
+            threshold = CLASS_THRESHOLDS.get(label, MIN_CONFIDENCE)
+            if conf >= threshold:
+                active_anomalies.append((label, conf))
 
-        return {"label": top1_label, "confidence": round(top1_conf, 3)}
+        if active_anomalies:
+            active_anomalies.sort(
+                key=lambda x: PRIORITY_ORDER.index(x[0]) if x[0] in PRIORITY_ORDER else 99
+            )
+            primary_label, primary_conf = active_anomalies[0]
+            # Confidence margin: high-priority class only wins if it is within 0.15
+            # of the most confident class. Prevents weapon (priority #1) from
+            # overriding violence=0.75 when weapon=0.48 — that is a violence scene.
+            highest_conf = max(c for _, c in active_anomalies)
+            if primary_conf < highest_conf - 0.15:
+                active_anomalies.sort(key=lambda x: x[1], reverse=True)
+                primary_label, primary_conf = active_anomalies[0]
+            # False positive guard: anomaly must be more confident than normal
+            if primary_conf <= normal_conf:
+                return {"label": "normal", "confidence": round(normal_conf, 3)}
+            return {
+                "label": primary_label,
+                "confidence": round(primary_conf, 3),
+                "detections": [(l, round(c, 3)) for l, c in active_anomalies],
+            }
+
+        return {"label": "normal", "confidence": round(normal_conf, 3)}
 
     def _run_resnet_tta(self, frame) -> dict | None:
-        """Test-Time Augmentation: average softmax over 5 views for robustness.
+        """Test-Time Augmentation: average sigmoid over 5 views for robustness.
 
         Views: original, horizontal flip, two corner crops, slight rotation.
-        Breaks ties on ambiguous classes (robbery/intrusion, weapon/normal).
+        Multi-label: each class fires independently via sigmoid.  Returns the
+        highest-priority anomaly class above MIN_CONFIDENCE threshold.
         """
         if self.resnet is None:
             return None
@@ -237,24 +311,44 @@ class VisualAnomalyDetector:
 
         with torch.no_grad():
             output = self.resnet(batch)
-            probs = torch.softmax(output, dim=1)
-            avg_probs = probs.mean(dim=0, keepdim=True)
+            probs = torch.sigmoid(output)
+            avg_probs = probs.mean(dim=0)  # (NUM_CLASSES,)
 
-        top2_probs, top2_idx = avg_probs.topk(2, dim=1)
-        top1_conf  = float(top2_probs[0][0])
-        top1_label = LABELS[int(top2_idx[0][0])]
-        top2_conf  = float(top2_probs[0][1])
-        top2_label = LABELS[int(top2_idx[0][1])]
+        normal_conf = float(avg_probs[LABELS.index("normal")])
 
-        if top1_label == "normal":
-            if top1_conf < 0.40 and top2_label != "normal" and top2_conf > MIN_CONFIDENCE:
-                return {"label": top2_label, "confidence": round(top2_conf * 0.85, 3)}
-            return {"label": "normal", "confidence": round(top1_conf, 3)}
+        # Multi-label: find all anomaly classes above their per-class threshold
+        active_anomalies = []
+        for i, label in enumerate(LABELS):
+            if label == "normal":
+                continue
+            conf = float(avg_probs[i])
+            threshold = CLASS_THRESHOLDS.get(label, MIN_CONFIDENCE)
+            if conf >= threshold:
+                active_anomalies.append((label, conf))
 
-        if top1_conf < MIN_CONFIDENCE:
-            return {"label": "normal", "confidence": round(1.0 - top1_conf, 3)}
+        if active_anomalies:
+            # Sort by priority: most critical threats first
+            active_anomalies.sort(
+                key=lambda x: PRIORITY_ORDER.index(x[0]) if x[0] in PRIORITY_ORDER else 99
+            )
+            primary_label, primary_conf = active_anomalies[0]
+            # Confidence margin: high-priority class only wins if it is within 0.15
+            # of the most confident class. Prevents weapon (priority #1) from
+            # overriding violence=0.75 when weapon=0.48 — that is a violence scene.
+            highest_conf = max(c for _, c in active_anomalies)
+            if primary_conf < highest_conf - 0.15:
+                active_anomalies.sort(key=lambda x: x[1], reverse=True)
+                primary_label, primary_conf = active_anomalies[0]
+            # False positive guard: anomaly must be more confident than normal
+            if primary_conf <= normal_conf:
+                return {"label": "normal", "confidence": round(normal_conf, 3)}
+            return {
+                "label": primary_label,
+                "confidence": round(primary_conf, 3),
+                "detections": [(l, round(c, 3)) for l, c in active_anomalies],
+            }
 
-        return {"label": top1_label, "confidence": round(top1_conf, 3)}
+        return {"label": "normal", "confidence": round(normal_conf, 3)}
 
 
     def _ensemble(self, yolo: dict, resnet: dict) -> dict:
