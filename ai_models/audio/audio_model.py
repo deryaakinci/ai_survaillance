@@ -119,6 +119,13 @@ class AudioAnomalyDetector:
         if self.model is None:
             return {"label": "normal", "confidence": 0.0, "error": "Model not loaded"}
 
+        # Silent or missing audio produces an all-zeros (or near-zeros) array.
+        # The mel spectrogram of silence is out-of-distribution for the CNN and
+        # causes it to output random high-confidence predictions. Detect silence
+        # early and skip classification entirely.
+        if np.max(np.abs(audio_chunk)) < 0.002:
+            return {"label": "normal", "confidence": 0.99}
+
         features = self._extract_features(audio_chunk, sr)
         tensor = torch.tensor(features).unsqueeze(0).unsqueeze(0).to(self.device)
 

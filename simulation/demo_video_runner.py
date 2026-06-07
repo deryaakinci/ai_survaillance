@@ -145,16 +145,19 @@ def best_visual_in_chunk(
     if not results:
         return {"label": "normal", "confidence": 0.0}
 
-    # High-priority threats — require at least 2 frames to agree before bypassing
-    # majority vote. Pick the most frequent priority label (not first-encountered),
-    # and surface all priority labels that meet the count threshold as detections.
+    # High-priority threats bypass majority vote with lower thresholds.
+    # weapon_detected: 1 frame is enough (missing a weapon is worse than a FP;
+    #   the 3-frame streak inside predict() already filters single-frame noise).
+    # explosion/violence: require 2 frames to agree.
     PRIORITY_LABELS = ["weapon_detected", "explosion", "violence"]
+    PRIORITY_MIN_FRAMES = {"weapon_detected": 1, "explosion": 2, "violence": 2}
     priority_hits = [r for r in results if r.get("label") in set(PRIORITY_LABELS)]
     prio_counts = Counter(r.get("label") for r in priority_hits)
 
-    # Collect all priority labels that appear in 2+ frames, sorted by frequency desc
+    # Collect all priority labels that meet their per-label frame threshold
     qualified = sorted(
-        [(label, count) for label, count in prio_counts.items() if count >= 2],
+        [(label, count) for label, count in prio_counts.items()
+         if count >= PRIORITY_MIN_FRAMES.get(label, 2)],
         key=lambda x: (-x[1], PRIORITY_LABELS.index(x[0]) if x[0] in PRIORITY_LABELS else 99),
     )
     if qualified:

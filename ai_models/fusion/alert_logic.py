@@ -5,13 +5,11 @@ class AlertLogic:
     def __init__(self):
         self.alert_history = []
 
-    CRITICAL_LABELS = [
-        "gunshot",
-        "impact",
-        "weapon_detected",
-        "person_down",
-        "distress_sounds",
-    ]
+    CRITICAL_LABELS = {
+        "gunshot", "impact", "weapon_detected", "person_down",
+        "distress_sounds", "violence", "explosion", "intrusion_detected",
+        "fight_sounds", "forced_entry",
+    }
 
     def should_send_alert(self, fusion_result: dict) -> bool:
         if not fusion_result.get("alert"):
@@ -19,12 +17,15 @@ class AlertLogic:
 
         now = datetime.utcnow()
 
-        audio_label = fusion_result.get("audio_label")
+        audio_label  = fusion_result.get("audio_label")
         visual_label = fusion_result.get("visual_label")
+        # also check secondary detections (e.g. weapon_detected as secondary to violence)
+        detection_labels = {d[0] for d in fusion_result.get("detections", [])}
 
         is_critical = (
             audio_label in self.CRITICAL_LABELS
             or visual_label in self.CRITICAL_LABELS
+            or bool(detection_labels & self.CRITICAL_LABELS)
         )
 
         # Critical events always bypass the duplicate check

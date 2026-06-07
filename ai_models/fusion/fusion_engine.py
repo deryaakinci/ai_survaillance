@@ -119,10 +119,10 @@ class FusionEngine:
     }
 
     # Minimum confidence to consider a prediction real.
-    # Audio at 0.35 filters ambient-sound false positives while still
+    # Audio at 0.45 filters ambient-sound false positives while still
     # catching genuine threats.  Visual at 0.30 is looser because scene
     # classification is inherently harder.
-    MIN_AUDIO_CONFIDENCE = 0.35
+    MIN_AUDIO_CONFIDENCE = 0.45
     MIN_VISUAL_CONFIDENCE = 0.30
 
     def fuse(self, audio_result: dict, visual_result: dict) -> dict:
@@ -163,7 +163,10 @@ class FusionEngine:
         # but the audio is confidently anomalous (a_label != "normal"), we upgrade
         # the visual label to a compatible threat class so the alert and dashboard
         # are unified and correct.
-        if a_label != "normal" and v_label == "normal" and v_conf < 0.80:
+        # Only upgrade when visual model has moderate confidence in "normal"
+        # (0.40–0.80). Below 0.40 the model is too uncertain to validate
+        # an audio-driven upgrade and would produce false positives.
+        if a_label != "normal" and v_label == "normal" and 0.40 <= v_conf < 0.80:
             audio_to_visual_map = {
                 "gunshot": "weapon_detected",
                 "fight_sounds": "violence",

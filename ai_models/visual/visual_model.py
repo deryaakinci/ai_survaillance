@@ -80,7 +80,7 @@ class VisualAnomalyDetector:
 
     # Consecutive frames weapon_detected must appear before firing the alert.
     # Eliminates single-frame FPs from scene context without blocking real threats.
-    _WEAPON_REQUIRED_FRAMES = 3
+    _WEAPON_REQUIRED_FRAMES = 2
 
     def __init__(self, debug: bool = False):
         self.debug       = debug
@@ -132,17 +132,11 @@ class VisualAnomalyDetector:
         resnet_result = self._run_resnet_tta(frame)
         weapon_hit    = self._run_weapon_scan(frame)
 
-        r_label = resnet_result["label"]       if resnet_result else "normal"
-        r_conf  = resnet_result["confidence"]  if resnet_result else 0.0
         detections = resnet_result.get("detections", []) if resnet_result else []
 
-        # YOLO is the sole weapon authority. Suppress on confidently-normal frames
-        # before the streak starts (kitchen-scene false-positive guard).
-        yolo_weapon = (
-            weapon_hit is not None
-            and not (r_label == "normal" and r_conf >= 0.45
-                     and self._weapon_streak < self._WEAPON_REQUIRED_FRAMES)
-        )
+        # YOLO is the sole weapon authority. The 3-frame streak is the false-positive
+        # guard — no additional suppression needed with a dedicated trained model.
+        yolo_weapon = weapon_hit is not None
 
         if yolo_weapon:
             conf = weapon_hit["confidence"]
@@ -180,14 +174,18 @@ class VisualAnomalyDetector:
         """
         # ── 1. Dedicated weapon detector (guns + knives) ──────────────
         if self.weapon_yolo is not None:
-            results = self.weapon_yolo(frame, verbose=False, conf=0.45)
+            # Use a lower detection floor (0.35) to handle low-quality or
+            # distant frames where YOLO confidence is compressed but the
+            # weapon is genuinely present. The 2-frame streak in predict()
+            # acts as the false-positive guard.
+            results = self.weapon_yolo(frame, verbose=False, conf=0.35)
             best_conf = 0.0
             for result in results:
                 for box in result.boxes:
                     confidence = float(box.conf[0])
                     if confidence > best_conf:
                         best_conf = confidence
-            if best_conf >= 0.45:
+            if best_conf >= 0.35:
                 return {"label": "weapon_detected", "confidence": round(best_conf, 3)}
             return None
 
