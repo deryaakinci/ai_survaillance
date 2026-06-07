@@ -264,10 +264,14 @@ class FusionEngine:
             else:
                 severity = "low"
 
-        return {
+        result = {
             "audio_label": a_label,
             "visual_label": v_label,
             "fused_score": round(fused_score, 3),
             "alert": alert,
             "severity": severity,
         }
+        detections = visual_result.get("detections")
+        if detections:
+            result["detections"] = detections
+        return result

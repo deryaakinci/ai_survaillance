@@ -557,7 +557,7 @@ def train(
 
     print(f"\n🚀 Starting training for {total_epochs} epochs...")
     print(f"   Phase 1 (epochs 1–{unfreeze_epoch}): Train classifier head only (224px)")
-    print(f"   Phase 2 (epochs {unfreeze_epoch+1}+): Fine-tune features.3-6+head (300px, MixUp α={mixup_alpha})")
+    print(f"   Phase 2 (epochs {unfreeze_epoch+1}+): Fine-tune features.4-6+head (300px, MixUp α={mixup_alpha})")
     print(f"   Scheduler: CosineAnnealingWarmRestarts (T_0=10, T_mult=2)")
     print(f"   SWA averaging starts at epoch {swa_start+1}")
     print(f"   Regularisation: weight_decay={weight_decay}, dropout=0.4/0.3/0.2")
@@ -566,15 +566,11 @@ def train(
     for epoch in range(total_epochs):
         # ── Phase transitions ──────────────────────────────────────
         if epoch == unfreeze_epoch:
-            print(f"\n🔓 Unfreezing features.3-6 at epoch {epoch + 1}...")
-            unfreeze_backbone(model, include_3=True)
+            print(f"\n🔓 Unfreezing features.4-6 at epoch {epoch + 1}...")
+            unfreeze_backbone(model, include_3=False)
 
-            # 4-tier differential LR: features.3 at very low LR (early layer, needs
-            # careful fine-tuning), features.4 slightly higher, 5-6 at backbone LR.
-            earliest_params = [
-                p for n, p in model.named_parameters()
-                if "features.3" in n and p.requires_grad
-            ]
+            # 3-tier differential LR: features.3 stays frozen (too early to fine-tune
+            # with this dataset size — unfreezing it caused overfitting).
             deep_params = [
                 p for n, p in model.named_parameters()
                 if "features.4" in n and p.requires_grad
@@ -588,7 +584,6 @@ def train(
                 if "classifier" in n and p.requires_grad
             ]
             optimizer = optim.AdamW([
-                {"params": earliest_params, "lr": lr_backbone * 0.05},
                 {"params": deep_params, "lr": lr_backbone * 0.2},
                 {"params": mid_params,  "lr": lr_backbone},
                 {"params": head_params, "lr": lr_head_ft},

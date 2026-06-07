@@ -24,10 +24,11 @@ FALLBACK_MODEL_PATH   = "yolov8n.pt"
 
 # Default minimum confidence to report an anomaly
 MIN_CONFIDENCE = 0.55
-# Per-class overrides — weapon uses lower threshold because the 3-frame streak filter
-# already guards against false positives; higher recall matters more here.
+# Per-class overrides — lower thresholds improve recall for classes that co-occur
+# with dominant scenes (e.g. violence alongside weapon_detected where weapon
+# saturates at 0.96 and suppresses the violence activation to ~0.48-0.54).
 CLASS_THRESHOLDS = {
-    "weapon_detected": 0.42,
+    "violence": 0.35,
 }
 
 # Priority order for multi-label: most critical threats reported first
@@ -81,7 +82,8 @@ class VisualAnomalyDetector:
     # Eliminates single-frame FPs from scene context without blocking real threats.
     _WEAPON_REQUIRED_FRAMES = 3
 
-    def __init__(self):
+    def __init__(self, debug: bool = False):
+        self.debug       = debug
         self.resnet      = None
         self.yolo        = None
         self.yolo_base   = None
@@ -134,44 +136,28 @@ class VisualAnomalyDetector:
         r_conf  = resnet_result["confidence"]  if resnet_result else 0.0
         detections = resnet_result.get("detections", []) if resnet_result else []
 
-        # YOLO knife hit: suppress only when classifier is confidently normal
-        # and we haven't built a streak yet (kitchen-scene false-positive guard).
+        # YOLO is the sole weapon authority. Suppress on confidently-normal frames
+        # before the streak starts (kitchen-scene false-positive guard).
         yolo_weapon = (
             weapon_hit is not None
             and not (r_label == "normal" and r_conf >= 0.45
                      and self._weapon_streak < self._WEAPON_REQUIRED_FRAMES)
         )
-        # Classifier weapon hit: check ALL multi-label detections, not just
-        # primary.  A frame labelled "violence" (primary) may also detect
-        # "weapon_detected" as secondary — the streak should still count.
-        weapon_detection = next(
-            ((label, conf) for label, conf in detections
-             if label == "weapon_detected"),
-            None,
-        )
-        classifier_weapon = weapon_detection is not None
-        # Don't build streak when weapon is clearly secondary to a dominant anomaly
-        # (e.g. violence=0.75, weapon=0.48 → this is a violence scene, not weapon)
-        if classifier_weapon and weapon_detection is not None:
-            max_other_conf = max(
-                (c for l, c in detections if l != "weapon_detected"), default=0.0
-            )
-            if weapon_detection[1] < max_other_conf - 0.15:
-                classifier_weapon = False
 
-        if yolo_weapon or classifier_weapon:
-            conf = max(
-                weapon_hit["confidence"] if yolo_weapon and weapon_hit else 0.0,
-                weapon_detection[1] if classifier_weapon else 0.0,
-            )
+        if yolo_weapon:
+            conf = weapon_hit["confidence"]
             self._weapon_streak += 1
             if self._weapon_streak >= self._WEAPON_REQUIRED_FRAMES:
-                return {"label": "weapon_detected", "confidence": round(conf, 3)}
-            # Streak building — return other detected anomaly if available
-            # (e.g. show "violence" while weapon streak is building)
-            non_weapon = [d for d in detections if d[0] != "weapon_detected"]
-            if non_weapon:
-                return {"label": non_weapon[0][0], "confidence": round(non_weapon[0][1], 3)}
+                result = {"label": "weapon_detected", "confidence": round(conf, 3)}
+                if detections:
+                    result["detections"] = [("weapon_detected", round(conf, 3))] + detections
+                return result
+            # Streak building — surface whatever scene EfficientNet sees
+            if detections:
+                result = {"label": detections[0][0], "confidence": round(detections[0][1], 3)}
+                if len(detections) > 1:
+                    result["detections"] = detections
+                return result
             return {"label": "normal", "confidence": round(1.0 - conf, 3)}
 
         self._weapon_streak = 0
@@ -252,10 +238,11 @@ class VisualAnomalyDetector:
 
         normal_conf = float(avg_probs[LABELS.index("normal")])
 
-        # Multi-label: find all anomaly classes above their per-class threshold
+        # Multi-label: find all anomaly classes above their per-class threshold.
+        # weapon_detected is excluded — YOLO is the sole weapon authority.
         active_anomalies = []
         for i, label in enumerate(LABELS):
-            if label == "normal":
+            if label in ("normal", "weapon_detected"):
                 continue
             conf = float(avg_probs[i])
             threshold = CLASS_THRESHOLDS.get(label, MIN_CONFIDENCE)
@@ -267,14 +254,10 @@ class VisualAnomalyDetector:
                 key=lambda x: PRIORITY_ORDER.index(x[0]) if x[0] in PRIORITY_ORDER else 99
             )
             primary_label, primary_conf = active_anomalies[0]
-            # Confidence margin: high-priority class only wins if it is within 0.15
-            # of the most confident class. Prevents weapon (priority #1) from
-            # overriding violence=0.75 when weapon=0.48 — that is a violence scene.
             highest_conf = max(c for _, c in active_anomalies)
             if primary_conf < highest_conf - 0.15:
                 active_anomalies.sort(key=lambda x: x[1], reverse=True)
                 primary_label, primary_conf = active_anomalies[0]
-            # False positive guard: anomaly must be more confident than normal
             if primary_conf <= normal_conf:
                 return {"label": "normal", "confidence": round(normal_conf, 3)}
             return {
@@ -316,10 +299,17 @@ class VisualAnomalyDetector:
 
         normal_conf = float(avg_probs[LABELS.index("normal")])
 
-        # Multi-label: find all anomaly classes above their per-class threshold
+        if self.debug:
+            print("[TTA probs]", {
+                label: f"{float(avg_probs[i]):.3f}"
+                for i, label in enumerate(LABELS)
+            })
+
+        # Multi-label: find all anomaly classes above their per-class threshold.
+        # weapon_detected is excluded — YOLO is the sole weapon authority.
         active_anomalies = []
         for i, label in enumerate(LABELS):
-            if label == "normal":
+            if label in ("normal", "weapon_detected"):
                 continue
             conf = float(avg_probs[i])
             threshold = CLASS_THRESHOLDS.get(label, MIN_CONFIDENCE)
@@ -327,19 +317,14 @@ class VisualAnomalyDetector:
                 active_anomalies.append((label, conf))
 
         if active_anomalies:
-            # Sort by priority: most critical threats first
             active_anomalies.sort(
                 key=lambda x: PRIORITY_ORDER.index(x[0]) if x[0] in PRIORITY_ORDER else 99
             )
             primary_label, primary_conf = active_anomalies[0]
-            # Confidence margin: high-priority class only wins if it is within 0.15
-            # of the most confident class. Prevents weapon (priority #1) from
-            # overriding violence=0.75 when weapon=0.48 — that is a violence scene.
             highest_conf = max(c for _, c in active_anomalies)
             if primary_conf < highest_conf - 0.15:
                 active_anomalies.sort(key=lambda x: x[1], reverse=True)
                 primary_label, primary_conf = active_anomalies[0]
-            # False positive guard: anomaly must be more confident than normal
             if primary_conf <= normal_conf:
                 return {"label": "normal", "confidence": round(normal_conf, 3)}
             return {

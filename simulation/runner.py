@@ -75,9 +75,15 @@ def run_all():
             verdict = f"✗ FAIL (expected {expected_severity}, got {severity})"
             failed += 1
 
+        detections = visual_result.get("detections", [])
+        if detections and len(detections) > 1:
+            visual_str = " + ".join(f"{l}({c:.2f})" for l, c in detections)
+        else:
+            visual_str = f"{visual_result['label']} ({visual_result['confidence']:.2f})"
+
         print(f"\n{name:<25} {status}")
         print(f"  Audio    : {audio_result['label']} ({audio_result['confidence']:.2f})")
-        print(f"  Visual   : {visual_result['label']} ({visual_result['confidence']:.2f})")
+        print(f"  Visual   : {visual_str}")
         print(f"  Fused    : {fusion_result['fused_score']} → severity={severity}")
         print(f"  Verdict  : {verdict}")
         print(f"  Detail   : {detail}")

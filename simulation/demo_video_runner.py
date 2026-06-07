@@ -27,7 +27,6 @@ import os
 import sys
 import subprocess
 import tempfile
-import threading
 import time
 
 import cv2
@@ -147,15 +146,39 @@ def best_visual_in_chunk(
         return {"label": "normal", "confidence": 0.0}
 
     # High-priority threats — require at least 2 frames to agree before bypassing
-    # majority vote. A single frame can be a transient false positive, but 2+ frames
-    # is a strong signal for critical threats like weapons, explosions, or violence.
-    priority_hits = [r for r in results if r.get("label") in {"weapon_detected", "explosion", "violence"}]
+    # majority vote. Pick the most frequent priority label (not first-encountered),
+    # and surface all priority labels that meet the count threshold as detections.
+    PRIORITY_LABELS = ["weapon_detected", "explosion", "violence"]
+    priority_hits = [r for r in results if r.get("label") in set(PRIORITY_LABELS)]
     prio_counts = Counter(r.get("label") for r in priority_hits)
-    for label, count in prio_counts.items():
-        if count >= 2:
-            matching = [r for r in priority_hits if r.get("label") == label]
-            best_prio = max(matching, key=lambda r: r["confidence"])
-            return best_prio
+
+    # Collect all priority labels that appear in 2+ frames, sorted by frequency desc
+    qualified = sorted(
+        [(label, count) for label, count in prio_counts.items() if count >= 2],
+        key=lambda x: (-x[1], PRIORITY_LABELS.index(x[0]) if x[0] in PRIORITY_LABELS else 99),
+    )
+    if qualified:
+        # Primary: most frequent (tie-broken by priority order)
+        primary_label = qualified[0][0]
+        matching = [r for r in priority_hits if r.get("label") == primary_label]
+        best_prio = max(matching, key=lambda r: r["confidence"])
+        # Surface additional co-occurring priority labels as secondary detections
+        if len(qualified) > 1:
+            secondary = []
+            for sec_label, _ in qualified[1:]:
+                sec_matching = [r for r in priority_hits if r.get("label") == sec_label]
+                sec_best = max(sec_matching, key=lambda r: r["confidence"])
+                secondary.append((sec_label, sec_best["confidence"]))
+            result = dict(best_prio)
+            existing_dets = list(best_prio.get("detections", [(primary_label, best_prio["confidence"])]))
+            if not any(d[0] == primary_label for d in existing_dets):
+                existing_dets = [(primary_label, best_prio["confidence"])] + existing_dets
+            for sec in secondary:
+                if not any(d[0] == sec[0] for d in existing_dets):
+                    existing_dets.append(sec)
+            result["detections"] = existing_dets
+            return result
+        return best_prio
 
     # Majority voting on the label
     labels = [r.get("label", "normal") for r in results]
@@ -167,7 +190,11 @@ def best_visual_in_chunk(
         # Average confidence of frames that voted for this label
         matching = [r for r in results if r.get("label") == majority_label]
         avg_conf = sum(r["confidence"] for r in matching) / len(matching)
-        return {"label": majority_label, "confidence": round(avg_conf, 3)}
+        best_frame = max(matching, key=lambda r: r["confidence"])
+        result = {"label": majority_label, "confidence": round(avg_conf, 3)}
+        if "detections" in best_frame:
+            result["detections"] = best_frame["detections"]
+        return result
 
     # Default: majority says normal, or no clear majority
     normal_confs = [r["confidence"] for r in results if r.get("label") == "normal"]
@@ -257,7 +284,7 @@ def run_demo(
     # ── load models ────────────────────────────────────────────────────────
     print("Loading models…")
     audio_model  = AudioAnomalyDetector()
-    visual_model = VisualAnomalyDetector()
+    visual_model = VisualAnomalyDetector(debug=False)
     fusion       = FusionEngine()
     alert_logic  = AlertLogic()
     print("Models ready.\n")
@@ -368,7 +395,11 @@ def run_demo(
             status = _c(C.DIM, "✓  clear")
 
         a_str = _c(sc if a_label != "normal" else C.DIM, f"{a_label} ({a_conf:.2f})")
-        v_str = _c(sc if v_label != "normal" else C.DIM, f"{v_label} ({v_conf:.2f})")
+        detections = fusion_result.get("detections", [])
+        if detections and len(detections) > 1:
+            v_str = _c(sc, " + ".join(f"{l}({c:.2f})" for l, c in detections))
+        else:
+            v_str = _c(sc if v_label != "normal" else C.DIM, f"{v_label} ({v_conf:.2f})")
 
         print(f"  {ts:<8} {a_str:<35} {v_str:<35} {status}")
 

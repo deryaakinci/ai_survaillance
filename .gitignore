@@ -21,9 +21,10 @@ simulation/datasets/image/
 *.weights
 *.onnx
 
-# YOLOv8 Training Outputs & Dataset
+# YOLOv8 Training Outputs & Datasets
 runs/
 ai_models/visual/yolo_dataset/
+ai_models/visual/weapon_dataset/
 ai_models/visual/saved_model/*/
 ai_models/audio/saved_model/*/
 
