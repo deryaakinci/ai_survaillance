@@ -397,7 +397,10 @@ def run_demo(
         else:
             status = _c(C.DIM, "✓  clear")
 
-        a_str = _c(sc if a_label != "normal" else C.DIM, f"{a_label} ({a_conf:.2f})")
+        if audio_result.get("silent"):
+            a_str = _c(C.DIM, "no audio stream")
+        else:
+            a_str = _c(sc if a_label != "normal" else C.DIM, f"{a_label} ({a_conf:.2f})")
         detections = fusion_result.get("detections", [])
         if detections and len(detections) > 1:
             v_str = _c(sc, " + ".join(f"{l}({c:.2f})" for l, c in detections))

@@ -114,7 +114,7 @@ class FusionEngine:
         "impact":         {"explosion", "person_down", "car_crash"},
         "distress_sounds": {"violence", "person_down", "intrusion_detected"},
         "forced_entry":   {"intrusion_detected"},
-        "fight_sounds":   {"violence", "person_down"},
+        "fight_sounds":   {"violence", "person_down", "weapon_detected", "intrusion_detected"},
         "siren":          {"car_crash", "person_down", "explosion"},
     }
 
@@ -122,7 +122,7 @@ class FusionEngine:
     # Audio at 0.45 filters ambient-sound false positives while still
     # catching genuine threats.  Visual at 0.30 is looser because scene
     # classification is inherently harder.
-    MIN_AUDIO_CONFIDENCE = 0.45
+    MIN_AUDIO_CONFIDENCE = 0.35
     MIN_VISUAL_CONFIDENCE = 0.30
 
     def fuse(self, audio_result: dict, visual_result: dict) -> dict:
@@ -154,7 +154,7 @@ class FusionEngine:
         # Suppress audio-only alerts, but only when the camera is
         # *confidently* normal (≥ 0.80). If the visual model is uncertain,
         # the audio is still trusted.
-        if a_label != "normal" and v_label == "normal" and v_conf >= 0.80:
+        if a_label != "normal" and v_label == "normal" and v_conf >= 0.90:
             a_label = "normal"
             a_conf = 1.0 - a_conf
 
@@ -246,7 +246,23 @@ class FusionEngine:
         else:
             fused_score = max(a_conf, v_conf)
 
-        alert = (a_label != "normal") or (v_label != "normal")
+        detections = visual_result.get("detections") or []
+
+        CRITICAL_DETECTION_LABELS = {
+            "weapon_detected", "person_down", "explosion",
+            "intrusion_detected", "violence", "gunshot", "distress_sounds",
+            "fight_sounds", "forced_entry", "impact",
+        }
+        critical_detections = [
+            (lbl, conf) for lbl, conf in detections
+            if lbl in CRITICAL_DETECTION_LABELS and conf >= 0.50
+        ]
+
+        alert = (
+            (a_label != "normal")
+            or (v_label != "normal")
+            or bool(critical_detections)
+        )
 
         # ── Severity ──────────────────────────────────────────────────
         severity = "low"
@@ -260,9 +276,12 @@ class FusionEngine:
                 "car_crash", "suspicious_package",
             ]
 
-            if a_label in high or v_label in high:
+            detection_labels = {lbl for lbl, _ in critical_detections}
+            if (a_label in high or v_label in high
+                    or detection_labels & set(high)):
                 severity = "high"
-            elif a_label in medium or v_label in medium:
+            elif (a_label in medium or v_label in medium
+                    or detection_labels & set(medium)):
                 severity = "medium"
             else:
                 severity = "low"
@@ -274,7 +293,6 @@ class FusionEngine:
             "alert": alert,
             "severity": severity,
         }
-        detections = visual_result.get("detections")
         if detections:
             result["detections"] = detections
         return result

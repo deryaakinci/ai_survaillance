@@ -124,7 +124,7 @@ class AudioAnomalyDetector:
         # causes it to output random high-confidence predictions. Detect silence
         # early and skip classification entirely.
         if np.max(np.abs(audio_chunk)) < 0.002:
-            return {"label": "normal", "confidence": 0.99}
+            return {"label": "normal", "confidence": 0.99, "silent": True}
 
         features = self._extract_features(audio_chunk, sr)
         tensor = torch.tensor(features).unsqueeze(0).unsqueeze(0).to(self.device)
@@ -141,10 +141,10 @@ class AudioAnomalyDetector:
 
         # Check borderline: top1 normal but top2 anomaly has decent conf
         if top1_label == "normal":
-            if top2_label != "normal" and top2_conf > 0.30:
+            if top2_label != "normal" and top2_conf > 0.25:
                 return {
                     "label": top2_label,
-                    "confidence": round(top2_conf * 0.8, 3),
+                    "confidence": round(top2_conf * 0.9, 3),
                 }
             return {"label": "normal", "confidence": round(top1_conf, 3)}
 
