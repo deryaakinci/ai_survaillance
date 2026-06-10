@@ -134,6 +134,11 @@ class AlertsScreen extends StatelessWidget {
                                     fontSize: 15,
                                     fontWeight: FontWeight.w600,
                                     color: Colors.white,
+                                    fontFamilyFallback: [
+                                      'Apple Color Emoji',
+                                      'Noto Color Emoji',
+                                      'Segoe UI Emoji',
+                                    ],
                                   ),
                                 ),
                               ),
