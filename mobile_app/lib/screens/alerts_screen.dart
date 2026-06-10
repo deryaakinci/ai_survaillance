@@ -10,23 +10,29 @@ class AlertsScreen extends StatelessWidget {
   String _primaryKey(AlertModel a) =>
       a.visualLabel != 'normal' ? a.visualLabel : a.audioLabel;
 
+  /// Returns only the human-readable title text (no emoji).
   String _alertTitle(String label) {
     const titles = {
-      'gunshot':            '🚨 Gunshot detected',
-      'impact':             '🚨 Impact detected',
-      'distress_sounds':    '⚠️ Distress sounds detected',
-      'forced_entry':       '🚨 Forced entry detected',
-      'fight_sounds':       '⚠️ Fight detected',
-      'siren':              '⚠️ Emergency siren nearby',
-      'weapon_detected':    '🚨 Weapon detected',
-      'explosion':          '🚨 Explosion detected',
-      'car_crash':  '⚠️ Car crash',
-      'violence':           '🚨 Violence detected',
-      'person_down':        '🚨 Person down',
-      'intrusion_detected': '🚨 Intrusion detected',
-      'suspicious_package': '⚠️ Suspicious package',
+      'gunshot':            'Gunshot detected',
+      'impact':             'Impact detected',
+      'distress_sounds':    'Distress sounds detected',
+      'forced_entry':       'Forced entry detected',
+      'fight_sounds':       'Fight detected',
+      'siren':              'Emergency siren nearby',
+      'weapon_detected':    'Weapon detected',
+      'explosion':          'Explosion detected',
+      'car_crash':          'Car crash',
+      'violence':           'Violence detected',
+      'person_down':        'Person down',
+      'intrusion_detected': 'Intrusion detected',
+      'suspicious_package': 'Suspicious package',
     };
-    return titles[label] ?? '⚠️ ${label.replaceAll('_', ' ')}';
+    return titles[label] ?? label.replaceAll('_', ' ');
+  }
+
+  /// High severity → siren icon; medium/low → warning icon.
+  IconData _alertIcon(String severity) {
+    return severity == 'high' ? Icons.crisis_alert : Icons.warning_amber_rounded;
   }
 
   Color _severityColor(String severity) {
@@ -96,6 +102,7 @@ class AlertsScreen extends StatelessWidget {
                       final alert = deduped[i];
                       final count = alertCounts[_primaryKey(alert)] ?? 1;
                       final color = _severityColor(alert.severity);
+                      final icon  = _alertIcon(alert.severity);
 
                       return GestureDetector(
                         onTap: () => Navigator.push(
@@ -116,17 +123,14 @@ class AlertsScreen extends StatelessWidget {
                           ),
                           child: Row(
                             children: [
-                              // Severity color dot
-                              Container(
-                                width: 10,
-                                height: 10,
-                                decoration: BoxDecoration(
-                                  color: color,
-                                  shape: BoxShape.circle,
-                                ),
+                              // Severity icon (replaces emoji)
+                              Icon(
+                                icon,
+                                color: color,
+                                size: 20,
                               ),
-                              const SizedBox(width: 14),
-                              // Alert name only
+                              const SizedBox(width: 12),
+                              // Alert title text
                               Expanded(
                                 child: Text(
                                   _alertTitle(_primaryKey(alert)),
@@ -134,11 +138,6 @@ class AlertsScreen extends StatelessWidget {
                                     fontSize: 15,
                                     fontWeight: FontWeight.w600,
                                     color: Colors.white,
-                                    fontFamilyFallback: [
-                                      'Apple Color Emoji',
-                                      'Noto Color Emoji',
-                                      'Segoe UI Emoji',
-                                    ],
                                   ),
                                 ),
                               ),
