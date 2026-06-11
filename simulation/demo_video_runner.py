@@ -38,7 +38,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from ai_models.audio.audio_model import AudioAnomalyDetector
-from ai_models.visual.visual_model import VisualAnomalyDetector
+from ai_models.visual.visual_model import VisualAnomalyDetector, CLASSIFIER_MODEL_PATH
 from ai_models.fusion.fusion_engine import FusionEngine
 from ai_models.fusion.alert_logic import AlertLogic
 
@@ -143,7 +143,10 @@ def best_visual_in_chunk(
         results.append(visual_model.predict(frame))
 
     if not results:
-        return {"label": "normal", "confidence": 0.0}
+        raise RuntimeError(
+            "Visual model could not read any frames in this chunk. "
+            "Check that the video file is valid and not corrupted."
+        )
 
     # High-priority threats bypass majority vote with lower thresholds.
     # weapon_detected: 1 frame is enough (missing a weapon is worse than a FP;
@@ -290,6 +293,21 @@ def run_demo(
     visual_model = VisualAnomalyDetector(debug=False)
     fusion       = FusionEngine()
     alert_logic  = AlertLogic()
+
+    # ── Require visual model to be operational ─────────────────────────
+    if not visual_model.is_ready():
+        print()
+        print(_c(C.RED + C.BOLD, "✗ DEMO ABORTED: Visual model not loaded."))
+        print(_c(C.RED,
+            "  The EfficientNet classifier was not found at:\n"
+            f"  {CLASSIFIER_MODEL_PATH}\n"
+            "\n"
+            "  The demo requires a functioning visual model to run.\n"
+            "  Train it first with:\n"
+            "    python -m ai_models.visual.train_visual_classifier\n"
+        ))
+        sys.exit(1)
+
     print("Models ready.\n")
 
     print("Connecting to backend API (for real-time dashboard)...")
@@ -348,10 +366,21 @@ def run_demo(
     while chunk_start < duration_sec:
         chunk_end = min(chunk_start + chunk_sec, duration_sec)
 
-        # ── visual: sample 5 frames across the chunk, use best result ─────────
-        visual_result = best_visual_in_chunk(
-            video_path, visual_model, chunk_start, chunk_end, n_samples=5
-        )
+        # ── visual: sample 5 frames across the chunk, use best result ───────────
+        try:
+            visual_result = best_visual_in_chunk(
+                video_path, visual_model, chunk_start, chunk_end, n_samples=5
+            )
+        except RuntimeError as e:
+            print()
+            print(_c(C.RED + C.BOLD, "✗ DEMO ABORTED: Visual input failed."))
+            print(_c(C.RED, f"  {e}"))
+            print(_c(C.RED,
+                "\n  The demo requires readable video frames at every chunk.\n"
+                "  Check that the video file is not corrupted and that\n"
+                "  OpenCV can open it on this system."
+            ))
+            sys.exit(1)
         # Also grab a single mid-chunk frame for snapshot purposes
         t_frame = (chunk_start + chunk_end) / 2
         frame = sample_frame(video_path, t_frame)

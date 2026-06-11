@@ -128,6 +128,14 @@ class VisualAnomalyDetector:
 
     # ── Public entry point ────────────────────────────────────────────
 
+    def is_ready(self) -> bool:
+        """
+        Returns True if the visual model has at least the EfficientNet
+        classifier loaded and is capable of meaningful inference.
+        Returns False when running in a degraded / model-not-found state.
+        """
+        return self.resnet is not None
+
     def predict(self, frame) -> dict:
         resnet_result = self._run_resnet_tta(frame)
         weapon_hit    = self._run_weapon_scan(frame)
