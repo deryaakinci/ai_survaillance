@@ -1,26 +1,4 @@
-"""
-demo_video_runner.py
-====================
-Run a single MP4 / AVI / MOV video through both AI models and the fusion
-engine for a live presentation demo.
 
-The video must contain audio.  The script:
-  1. Extracts audio from the video using ffmpeg (one-time step).
-  2. Walks through the video in configurable time-chunks (default 3 s).
-  3. For each chunk  → runs VisualAnomalyDetector on a sample frame
-                      → runs AudioAnomalyDetector on the matching audio slice
-                      → fuses both results and checks alert logic.
-  4. Prints a live, colour-coded timeline to the terminal.
-
-Usage (from project root):
-    python -m simulation.demo_video_runner --video path/to/your_video.mp4
-
-Optional flags:
-    --chunk_sec   Duration of each analysis chunk in seconds (default 3)
-    --fps_sample  Which frame inside the chunk to sample for visual (default 1
-                  = first frame of the chunk). Set to 'mid' to grab the middle.
-    --no_color    Disable ANSI colours (for plain terminal / log file output).
-"""
 
 import argparse
 import os
@@ -143,10 +121,9 @@ def best_visual_in_chunk(
         results.append(visual_model.predict(frame))
 
     if not results:
-        raise RuntimeError(
-            "Visual model could not read any frames in this chunk. "
-            "Check that the video file is valid and not corrupted."
-        )
+        # No readable frames in this chunk (e.g. short tail at end of video).
+        # Signal the caller to skip gracefully instead of aborting.
+        return {"label": "normal", "confidence": 0.0, "_no_frames": True}
 
     # High-priority threats bypass majority vote with lower thresholds.
     # weapon_detected: 1 frame is enough (missing a weapon is worse than a FP;
@@ -362,25 +339,23 @@ def run_demo(
     chunk_start = 0.0
     total_alerts = 0
     high_count = medium_count = low_count = 0
+    chunks_read = 0  # tracks how many chunks had at least one readable frame
 
     while chunk_start < duration_sec:
         chunk_end = min(chunk_start + chunk_sec, duration_sec)
 
         # ── visual: sample 5 frames across the chunk, use best result ───────────
-        try:
-            visual_result = best_visual_in_chunk(
-                video_path, visual_model, chunk_start, chunk_end, n_samples=5
-            )
-        except RuntimeError as e:
-            print()
-            print(_c(C.RED + C.BOLD, "✗ DEMO ABORTED: Visual input failed."))
-            print(_c(C.RED, f"  {e}"))
-            print(_c(C.RED,
-                "\n  The demo requires readable video frames at every chunk.\n"
-                "  Check that the video file is not corrupted and that\n"
-                "  OpenCV can open it on this system."
-            ))
-            sys.exit(1)
+        visual_result = best_visual_in_chunk(
+            video_path, visual_model, chunk_start, chunk_end, n_samples=5
+        )
+
+        # Skip chunks where OpenCV couldn't decode any frame (e.g. short tail).
+        # The hard abort fires only after the loop if NO chunk was readable at all.
+        if visual_result.get("_no_frames"):
+            chunk_start += chunk_sec
+            continue
+
+        chunks_read += 1
         # Also grab a single mid-chunk frame for snapshot purposes
         t_frame = (chunk_start + chunk_end) / 2
         frame = sample_frame(video_path, t_frame)
@@ -449,6 +424,17 @@ def run_demo(
         post_event(session_info, audio_result, visual_result, fusion_result, fusion_result["alert"], frame)
 
         chunk_start += chunk_sec
+
+    # ── abort if the entire video was unreadable ───────────────────────────
+    if chunks_read == 0:
+        print()
+        print(_c(C.RED + C.BOLD, "✗ DEMO ABORTED: Visual input failed."))
+        print(_c(C.RED,
+            "  Visual model could not read any frames in this video.\n"
+            "  Check that the video file is not corrupted and that\n"
+            "  OpenCV can open it on this system."
+        ))
+        sys.exit(1)
 
     # ── summary ────────────────────────────────────────────────────────────
     print(_c(C.BOLD, "-" * 62))
