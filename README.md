@@ -28,19 +28,21 @@ An intelligent audio-visual fusion surveillance platform that detects security t
           ┌──────────▼───────────┐
           │    AI Models Layer   │
           │  ┌────────────────┐  │
-          │  │   AudioCNN     │  │  ← 11 threat classes
-          │  │   (PyTorch)    │  │    Mel-spectrogram CNN
+          │  │AudioAnomalyDe- │  │  ← 7 classes (6 threats + normal)
+          │  │   tector       │  │    3-block Conv2D, Mel-spectrograms
+          │  │  (AudioCNN)    │  │    silence guard · top-2 check
           │  └───────┬────────┘  │
           │  ┌───────▼────────┐  │
-          │  │VisualDetector  │  │  ← ResNet18 scene classifier
-          │  │ (ResNet18 +    │  │    + YOLOv8n weapon scanner
-          │  │  YOLOv8n)      │  │
+          │  │VisualAnomaly   │  │  ← EfficientNet-V2-S classifier
+          │  │  Detector      │  │    + dedicated Weapon YOLO
+          │  │(EfficientNet + │  │    + YOLOv8n knife fallback
+          │  │  Weapon YOLO)  │  │    5-view TTA · 2-frame streak guard
           │  └───────┬────────┘  │
           │  ┌───────▼────────┐  │
-          │  │ FusionEngine   │  │  ← Cross-modal consistency
-          │  └───────┬────────┘  │     + confidence scoring
-          └──────────┼───────────┘     + abandoned-object tracker
-                     │
+          │  │ FusionEngine   │  │  ← Confidence floors
+          │  └───────┬────────┘  │     cross-modal upgrade / override
+          └──────────┼───────────┘     weapon upgrade · severity scoring
+                     │                 abandoned-object tracker
           ┌──────────▼───────────┐
           │   FastAPI Backend    │  ← REST + WebSocket
           │   PostgreSQL / ORM   │    JWT authentication
@@ -48,8 +50,8 @@ An intelligent audio-visual fusion surveillance platform that detects security t
           └──────────┬───────────┘
                      │ WebSocket / REST
           ┌──────────▼───────────┐
-          │    Flutter Mobile    │  ← iOS / Android / Web
-          │    App               │    / macOS / Linux / Windows
+          │    Flutter Mobile    │  ← iOS / Web
+          │    App               │    / macOS / Windows
           └──────────────────────┘
 ```
 
@@ -59,31 +61,57 @@ An intelligent audio-visual fusion surveillance platform that detects security t
 
 ### AI Models
 
-| Layer | Model | Details |
-|---|---|---|
-| Audio | `AudioCNN` | 3-block Conv2D on Mel-spectrograms, 11 threat classes |
-| Visual | `VisualAnomalyDetector` | ResNet18 scene classifier + YOLOv8n weapon scanner |
-| Fusion | `FusionEngine` | Cross-modal consistency check, confidence thresholding, severity scoring |
-| Object Tracking | `FusionEngine` | Abandoned-object detection (ownership registry + 60 s timer) |
+| Layer | Class | Backbone | Details |
+|---|---|---|---|
+| Audio | `AudioAnomalyDetector` | `AudioCNN` | 3-block Conv2D on 128-band Mel-spectrograms; silence guard skips inference when peak amplitude < 0.002; top-2 softmax borderline check |
+| Visual | `VisualAnomalyDetector` | EfficientNet-V2-S + YOLOv8 | EfficientNet-V2-S multi-label classifier with 5-view TTA; dedicated weapon YOLO (guns + knives); base YOLOv8n knife-only fallback; 2-frame streak guard on weapon alerts |
+| Fusion | `FusionEngine` | — | Confidence floors, cross-modal upgrade/override, weapon upgrade, agreement/penalty scoring, severity assignment |
+| Object Tracking | `FusionEngine` | — | Abandoned-object detection: ownership registry, 60 s stationary timer, 5.0-unit owner-distance trigger |
 
-**Audio threat classes:** `gunshot` · `explosion` · `scream` · `glass_break` · `forced_entry` · `crying_distress` · `fight_sounds` · `siren` · `car_crash` · `threatening_voice`
+**Audio classes (7):** `normal` · `gunshot` · `impact` · `distress_sounds` · `forced_entry` · `fight_sounds` · `siren`
 
-**Visual threat classes:** `intruder_detected` · `weapon_detected` · `explosion` · `car_crash` · `abuse` · `fighting` · `assault` · `robbery` · `person_down` · `forced_entry`
+**Visual classes (7):** `normal` · `weapon_detected` · `explosion` · `car_crash` · `violence` · `person_down` · `intrusion_detected`
+
+**Visual inference details:**
+- Default confidence threshold: **0.55**; per-class override: `violence` → **0.35** (improves recall when weapon activation suppresses it)
+- Priority order (most critical first): `weapon_detected` › `explosion` › `person_down` › `violence` › `intrusion_detected` › `car_crash`
+- If the highest-confidence anomaly outscores the primary by > 0.15, the primary is re-ranked by confidence
+- `weapon_detected` is excluded from the EfficientNet head — YOLO is the sole weapon authority
 
 **Severity levels:**
 
-| Level | Example triggers |
+| Level | Triggers |
 |---|---|
-| 🔴 High | weapon detected, gunshot, explosion, assault, abuse, person down |
-| 🟡 Medium | intruder, car crash, glass break |
-| 🟢 Low | siren, suspicious package |
+| 🔴 High | `weapon_detected` · `person_down` · `explosion` · `intrusion_detected` · `violence` · `gunshot` · `distress_sounds` · `fight_sounds` · `forced_entry` · `impact` |
+| 🟡 Medium | `car_crash` · `suspicious_package` |
+| 🟢 Low | everything else |
 
 ### Fusion Logic
 
-- **Confidence floor** — predictions below 0.25 are discarded as noise.
-- **Cross-modal consistency** — if audio and visual labels are semantically incompatible (e.g. `gunshot` audio with `car_crash` visual), the audio prediction is overridden and its confidence is penalised 70%.
-- **Agreement bonus** — when both modalities agree on the same label, the fused score is boosted 15%.
-- **Disagreement penalty** — conflicting non-normal labels are averaged with an 85% multiplier.
+The `FusionEngine.fuse()` method runs the following pipeline in order:
+
+1. **Confidence floors** — audio below **0.35** and visual below **0.30** are demoted to `normal`.
+2. **Audio suppression** — if visual is confidently normal (≥ 0.90), an audio-only anomaly is suppressed.
+3. **Cross-modal upgrade** — if visual is uncertain (0.40–0.80 "normal" confidence) but audio is anomalous, the visual label is upgraded to a compatible threat class using a fixed mapping (`gunshot` → `weapon_detected`, `fight_sounds`/`distress_sounds` → `violence`, `forced_entry` → `intrusion_detected`, `impact` → `car_crash`, `siren` → `intrusion_detected`) and floored at 0.60.
+4. **Cross-modal consistency override** — when both modalities are anomalous but semantically incompatible (based on `AUDIO_VISUAL_COMPAT` map), audio is overridden to match the visual label and its confidence is penalised ×0.3. The floor check is re-applied after this penalty.
+5. **Weak visual suppression** — a visual-only anomaly below **0.70** (non-critical) or **0.60** (critical) is suppressed when audio is confidently silent.
+6. **Weapon upgrade** — `gunshot` audio + `violence` / `intrusion_detected` / `person_down` visual → promoted to `weapon_detected` (visual confidence floored at 0.65).
+7. **Fused score**:
+   - Both modalities agree → `max(a_conf, v_conf) × 1.15` (15 % boost, capped at 1.0)
+   - Both anomalous but different → `max(a_conf, v_conf) × 0.85` (15 % penalty)
+   - One modality fires → raw `max(a_conf, v_conf)`
+8. **Alert flag** — set if either label is non-normal or any secondary visual detection ≥ 0.50 is a critical class.
+
+**`AUDIO_VISUAL_COMPAT` map** (audio label → acceptable visual labels):
+
+| Audio | Compatible Visual Labels |
+|---|---|
+| `gunshot` | `weapon_detected`, `violence`, `person_down` |
+| `impact` | `explosion`, `person_down`, `car_crash` |
+| `distress_sounds` | `violence`, `person_down`, `intrusion_detected` |
+| `forced_entry` | `intrusion_detected` |
+| `fight_sounds` | `violence`, `person_down`, `weapon_detected`, `intrusion_detected` |
+| `siren` | `car_crash`, `person_down`, `explosion` |
 
 ### Backend
 
@@ -106,101 +134,6 @@ An intelligent audio-visual fusion surveillance platform that detects security t
 | Account | User profile and notification settings |
 
 Real-time updates are driven by a `WebSocketService` provider; the app also polls the REST API as a fallback.
-
----
-
-## Project Structure
-
-```
-ai_survaillance/
-├── ai_models/
-│   ├── __init__.py
-│   ├── audio/
-│   │   ├── audio_model.py              # AudioCNN + AudioAnomalyDetector
-│   │   ├── train_audio_model.py        # Full training pipeline
-│   │   └── saved_model/               # best_model.pth + labels.json
-│   ├── visual/
-│   │   ├── visual_model.py             # VisualAnomalyDetector (ResNet18 + YOLOv8n)
-│   │   ├── train_visual_classifier.py  # Fine-tuning script (ResNet18)
-│   │   ├── train_visual_model.py       # Alternative training script
-│   │   ├── classifier_frames/          # Frame dataset for classifier
-│   │   ├── weapon_dataset/             # Dataset for weapon detection
-│   │   └── saved_model/               # best_classifier.pth + YOLO weights
-│   └── fusion/
-│       ├── fusion_engine.py            # FusionEngine + abandoned-object tracker
-│       └── alert_logic.py             # AlertLogic (threshold → fire/suppress)
-│
-├── backend/
-│   ├── main.py                         # FastAPI app entry point + WebSocket manager
-│   ├── api/
-│   │   └── routes/
-│   │       ├── auth.py                 # Register / login / JWT token
-│   │       ├── events.py              # Event CRUD + demo_broadcast
-│   │       ├── alerts.py              # Alert retrieval
-│   │       └── stats.py               # Aggregated analytics
-│   ├── database/
-│   │   ├── models.py                  # Event, Alert, User ORM models
-│   │   └── db.py                      # SQLAlchemy engine + session factory
-│   ├── services/
-│   │   └── notifier.py                # NotificationService (WebSocket dispatch)
-│   └── static/                        # Served JPEG snapshots
-│
-├── simulation/
-│   ├── runner.py                       # Runs all scenarios end-to-end
-│   ├── demo_video_runner.py            # Plays demo MP4s through the full AI pipeline
-│   ├── generate_synthetic_audio.py     # Synthetic audio generation utility
-│   ├── base.py                         # Scenario loader (audio + visual assets)
-│   ├── demo1.mp4 … demo6.mp4          # Demo video files for the pipeline
-│   ├── datasets/                       # Audio/video sample datasets
-│   ├── scenarios/                      # One module per threat type
-│   │   ├── normal.py
-│   │   ├── gunshot.py
-│   │   ├── explosion.py
-│   │   ├── forced_entry.py
-│   │   ├── intruder_detected.py
-│   │   ├── weapon_detected.py
-│   │   ├── car_crash.py
-│   │   ├── person_down.py
-│   │   └── suspicious_package.py
-│   └── input_gen/                      # Synthetic audio / video generators
-│       ├── audio_sim.py
-│       └── video_sim.py
-│
-├── mobile_app/                         # Flutter project
-│   └── lib/
-│       ├── main.dart                   # App entry point + routing
-│       ├── models/
-│       │   ├── alert_model.dart
-│       │   └── user_model.dart
-│       ├── providers/
-│       │   ├── auth_provider.dart
-│       │   └── alert_provider.dart
-│       ├── screens/
-│       │   ├── login_screen.dart
-│       │   ├── signup_screen.dart
-│       │   ├── dashboard_screen.dart
-│       │   ├── alerts_screen.dart
-│       │   ├── alert_detail_screen.dart
-│       │   ├── analytics_screen.dart
-│       │   ├── history_screen.dart
-│       │   └── account_screen.dart
-│       ├── services/
-│       │   ├── api_service.dart
-│       │   ├── websocket_service.dart
-│       │   ├── notification_service.dart
-│       │   └── secure_storage_service.dart
-│       └── widgets/
-│           ├── alert_card.dart
-│           └── stat_card.dart
-│
-├── evaluate_models.py                  # Offline model evaluation script
-├── seed_db.py                          # Database seed script
-├── requirements.txt                    # Python dependencies
-├── yolov8n.pt                          # YOLOv8n base weights
-├── yolo26n.pt                          # YOLO v26n weights variant
-├── .env.example                        # Environment variable template
-└── .gitignore
-```
 
 ---
 
