@@ -4,6 +4,20 @@ An intelligent audio-visual fusion surveillance platform that detects security t
 
 ---
 
+## Team
+
+| Name | Student No | Role |
+|------|-----------|------|
+| Derya Akıncı | 22450272 | Project Manager / AI Developer |
+| Ege İşcan | 22000344 | Backend Developer |
+| Alper Hatipoğlu | 21000058 | Frontend Developer |
+
+**Supervisor:** Prof. Dr. Ekrem Varoğlu  
+**Course:** CMPE 406 – Graduation Project  
+**University:** Eastern Mediterranean University  
+**Semester:** Spring 2025–2026
+---
+
 ## Table of Contents
 
 1. [Architecture Overview](#architecture-overview)
