@@ -10,7 +10,6 @@ import time
 import cv2
 import numpy as np
 
-# ── project root on sys.path ───────────────────────────────────────────────
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -20,8 +19,6 @@ from ai_models.visual.visual_model import VisualAnomalyDetector, CLASSIFIER_MODE
 from ai_models.fusion.fusion_engine import FusionEngine
 from ai_models.fusion.alert_logic import AlertLogic
 
-
-# ── ANSI colours ──────────────────────────────────────────────────────────
 class C:
     RED    = "\033[91m"
     YELLOW = "\033[93m"
@@ -36,9 +33,6 @@ _use_color = True
 def _c(code, text):
     return f"{code}{text}{C.RESET}" if _use_color else text
 
-
-# ── helpers ───────────────────────────────────────────────────────────────
-
 def _check_ffmpeg():
     try:
         subprocess.run(
@@ -51,15 +45,14 @@ def _check_ffmpeg():
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
 
-
 def extract_audio_wav(video_path: str, out_wav: str, sr: int = 22050):
     """Extract mono audio from the video to a temporary WAV file."""
     cmd = [
         "ffmpeg", "-y",
         "-i", video_path,
-        "-ac", "1",          # mono
-        "-ar", str(sr),      # target sample rate
-        "-vn",               # no video stream
+        "-ac", "1",
+        "-ar", str(sr),
+        "-vn",
         out_wav,
     ]
     result = subprocess.run(
@@ -72,13 +65,11 @@ def extract_audio_wav(video_path: str, out_wav: str, sr: int = 22050):
             f"ffmpeg failed to extract audio:\n{result.stderr.decode()}"
         )
 
-
 def load_wav_numpy(wav_path: str, sr: int = 22050) -> np.ndarray:
     """Load a WAV file to a float32 numpy array using librosa."""
     import librosa
     audio, _ = librosa.load(wav_path, sr=sr, mono=True)
     return audio.astype(np.float32)
-
 
 def sample_frame(video_path: str, timestamp_sec: float) -> np.ndarray | None:
     """Return a BGR frame at `timestamp_sec` from the video."""
@@ -87,7 +78,6 @@ def sample_frame(video_path: str, timestamp_sec: float) -> np.ndarray | None:
     ret, frame = cap.read()
     cap.release()
     return frame if ret else None
-
 
 def best_visual_in_chunk(
     video_path: str,
@@ -121,31 +111,22 @@ def best_visual_in_chunk(
         results.append(visual_model.predict(frame))
 
     if not results:
-        # No readable frames in this chunk (e.g. short tail at end of video).
-        # Signal the caller to skip gracefully instead of aborting.
         return {"label": "normal", "confidence": 0.0, "_no_frames": True}
 
-    # High-priority threats bypass majority vote with lower thresholds.
-    # weapon_detected: 1 frame is enough (missing a weapon is worse than a FP;
-    #   the 3-frame streak inside predict() already filters single-frame noise).
-    # explosion/violence: require 2 frames to agree.
     PRIORITY_LABELS = ["weapon_detected", "explosion", "violence"]
     PRIORITY_MIN_FRAMES = {"weapon_detected": 1, "explosion": 2, "violence": 2}
     priority_hits = [r for r in results if r.get("label") in set(PRIORITY_LABELS)]
     prio_counts = Counter(r.get("label") for r in priority_hits)
 
-    # Collect all priority labels that meet their per-label frame threshold
     qualified = sorted(
         [(label, count) for label, count in prio_counts.items()
          if count >= PRIORITY_MIN_FRAMES.get(label, 2)],
         key=lambda x: (-x[1], PRIORITY_LABELS.index(x[0]) if x[0] in PRIORITY_LABELS else 99),
     )
     if qualified:
-        # Primary: most frequent (tie-broken by priority order)
         primary_label = qualified[0][0]
         matching = [r for r in priority_hits if r.get("label") == primary_label]
         best_prio = max(matching, key=lambda r: r["confidence"])
-        # Surface additional co-occurring priority labels as secondary detections
         if len(qualified) > 1:
             secondary = []
             for sec_label, _ in qualified[1:]:
@@ -163,14 +144,11 @@ def best_visual_in_chunk(
             return result
         return best_prio
 
-    # Majority voting on the label
     labels = [r.get("label", "normal") for r in results]
     label_counts = Counter(labels)
     majority_label, majority_count = label_counts.most_common(1)[0]
 
-    # Need strict majority (>50%) to report an anomaly
     if majority_label != "normal" and majority_count > len(results) / 2:
-        # Average confidence of frames that voted for this label
         matching = [r for r in results if r.get("label") == majority_label]
         avg_conf = sum(r["confidence"] for r in matching) / len(matching)
         best_frame = max(matching, key=lambda r: r["confidence"])
@@ -179,11 +157,9 @@ def best_visual_in_chunk(
             result["detections"] = best_frame["detections"]
         return result
 
-    # Default: majority says normal, or no clear majority
     normal_confs = [r["confidence"] for r in results if r.get("label") == "normal"]
     avg_normal = sum(normal_confs) / len(normal_confs) if normal_confs else 0.9
     return {"label": "normal", "confidence": round(avg_normal, 3)}
-
 
 def severity_color(severity: str) -> str:
     if severity == "high":
@@ -192,20 +168,14 @@ def severity_color(severity: str) -> str:
         return C.YELLOW
     return C.GREEN
 
-
 def format_timestamp(seconds: float) -> str:
     m, s = divmod(int(seconds), 60)
     return f"{m:02d}:{s:02d}"
 
-
-# ── API Integration ────────────────────────────────────────────────────────
-
 def setup_api_session(base_url="http://localhost:8000"):
     import requests
     try:
-        # Just check if the server is alive
         requests.get(base_url, timeout=2)
-        # Reset deduplication state for fresh demo run
         requests.post(f"{base_url}/events/demo_broadcast/reset", timeout=2)
         return {"base_url": base_url}
     except:
@@ -218,7 +188,6 @@ def post_event(session_info, audio_result, visual_result, fusion_result, alert_f
 
     snapshot_filename = ""
 
-    # Save frame snapshot when an alert fires
     if alert_fired and frame is not None:
         snapshot_dir = os.path.join(ROOT, "backend", "static", "snapshots")
         os.makedirs(snapshot_dir, exist_ok=True)
@@ -245,9 +214,6 @@ def post_event(session_info, audio_result, visual_result, fusion_result, alert_f
     except Exception:
         pass
 
-
-# ── main analysis loop ────────────────────────────────────────────────────
-
 def run_demo(
     video_path: str,
     chunk_sec: int = 3,
@@ -264,14 +230,12 @@ def run_demo(
     print(f"  Chunk   : {chunk_sec} s per analysis window")
     print()
 
-    # ── load models ────────────────────────────────────────────────────────
     print("Loading models…")
     audio_model  = AudioAnomalyDetector()
     visual_model = VisualAnomalyDetector(debug=False)
     fusion       = FusionEngine()
     alert_logic  = AlertLogic()
 
-    # ── Require visual model to be operational ─────────────────────────
     if not visual_model.is_ready():
         print()
         print(_c(C.RED + C.BOLD, "✗ DEMO ABORTED: Visual model not loaded."))
@@ -294,7 +258,6 @@ def run_demo(
     else:
         print(_c(C.YELLOW, "  ⚠ Local backend not running. Terminal-only mode.\n"))
 
-    # ── get video duration ──────────────────────────────────────────────────
     cap = cv2.VideoCapture(video_path)
     fps           = cap.get(cv2.CAP_PROP_FPS) or 25
     total_frames  = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -307,7 +270,6 @@ def run_demo(
     print(f"  Chunks  : {int(duration_sec // chunk_sec) + 1}")
     print()
 
-    # ── extract audio ──────────────────────────────────────────────────────
     has_ffmpeg = _check_ffmpeg()
     audio_array: np.ndarray | None = None
 
@@ -331,7 +293,6 @@ def run_demo(
             "    Install with: brew install ffmpeg\n"
         ))
 
-    # ── analysis loop ──────────────────────────────────────────────────────
     print(_c(C.BOLD, "-" * 62))
     print(_c(C.BOLD, f"  {'TIME':<8} {'AUDIO LABEL':<22} {'VISUAL LABEL':<22} STATUS"))
     print(_c(C.BOLD, "-" * 62))
@@ -339,30 +300,25 @@ def run_demo(
     chunk_start = 0.0
     total_alerts = 0
     high_count = medium_count = low_count = 0
-    chunks_read = 0  # tracks how many chunks had at least one readable frame
+    chunks_read = 0
 
     while chunk_start < duration_sec:
         chunk_end = min(chunk_start + chunk_sec, duration_sec)
 
-        # ── visual: sample 5 frames across the chunk, use best result ───────────
         visual_result = best_visual_in_chunk(
             video_path, visual_model, chunk_start, chunk_end, n_samples=5
         )
 
-        # Skip chunks where OpenCV couldn't decode any frame (e.g. short tail).
-        # The hard abort fires only after the loop if NO chunk was readable at all.
         if visual_result.get("_no_frames"):
             chunk_start += chunk_sec
             continue
 
         chunks_read += 1
-        # Also grab a single mid-chunk frame for snapshot purposes
         t_frame = (chunk_start + chunk_end) / 2
         frame = sample_frame(video_path, t_frame)
         if frame is None:
             frame = np.zeros((480, 640, 3), dtype=np.uint8)
 
-        # ── audio: slice from the full waveform ────────────────────────────
         if audio_array is not None:
             start_sample = int(chunk_start * sr)
             end_sample   = int(chunk_end   * sr)
@@ -370,17 +326,14 @@ def run_demo(
             if len(audio_chunk) == 0:
                 audio_chunk = np.zeros(sr * chunk_sec, dtype=np.float32)
         else:
-            # No ffmpeg — use silence so visual analysis still runs
             audio_chunk = np.zeros(sr * chunk_sec, dtype=np.float32)
 
-        # ── run models ─────────────────────────────────────────────────────
         audio_result  = audio_model.predict(audio_chunk, sr)
         fusion_result = fusion.fuse(audio_result, visual_result)
         alert_fired   = alert_logic.should_send_alert(fusion_result)
         severity      = fusion_result["severity"]
         sc            = severity_color(severity)
 
-        # ── build output line (use fused/corrected labels) ─────────────────
         ts       = format_timestamp(chunk_start)
         a_label  = fusion_result["audio_label"]
         v_label  = fusion_result["visual_label"]
@@ -418,14 +371,10 @@ def run_demo(
             print(_c(C.DIM, f"           → fused_score={fused:.3f}  "
                 f"audio_conf={a_conf:.2f}  visual_conf={v_conf:.2f}"))
 
-        # Send to API if connected (pass frame for snapshot capture)
-        # Use fusion_result["alert"] (raw anomaly flag) instead of the
-        # locally-deduplicated alert_fired — let the backend handle dedup.
         post_event(session_info, audio_result, visual_result, fusion_result, fusion_result["alert"], frame)
 
         chunk_start += chunk_sec
 
-    # ── abort if the entire video was unreadable ───────────────────────────
     if chunks_read == 0:
         print()
         print(_c(C.RED + C.BOLD, "✗ DEMO ABORTED: Visual input failed."))
@@ -436,7 +385,6 @@ def run_demo(
         ))
         sys.exit(1)
 
-    # ── summary ────────────────────────────────────────────────────────────
     print(_c(C.BOLD, "-" * 62))
     print()
     print(_c(C.BOLD, "  SUMMARY"))
@@ -456,9 +404,6 @@ def run_demo(
         ))
     print(_c(C.BOLD, "=" * 62))
     print()
-
-
-# ── CLI ───────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(

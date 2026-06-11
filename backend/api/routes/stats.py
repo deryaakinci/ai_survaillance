@@ -14,7 +14,6 @@ router = APIRouter()
 
 SECRET_KEY = os.getenv("SECRET_KEY", "your_secret_key_change_in_production")
 
-
 def get_current_user_id(request: Request) -> str:
     """Extract and VERIFY user ID from JWT token"""
     auth_header = request.headers.get("Authorization")
@@ -56,7 +55,6 @@ def get_current_user_id(request: Request) -> str:
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-
 @router.get("/")
 def get_stats_overview(
     days: int = 7,
@@ -67,20 +65,17 @@ def get_stats_overview(
     user_id = get_current_user_id(request)
     since = datetime.utcnow() - timedelta(days=days)
 
-    # ── Total alerts in timeframe ──────────────────────────────────────
     total = db.query(Alert).filter(
         Alert.user_id == user_id,
         Alert.timestamp >= since,
     ).count()
 
-    # ── Alerts today ──────────────────────────────────────────────────
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     alerts_today = db.query(Alert).filter(
         Alert.user_id == user_id,
         Alert.timestamp >= today_start,
     ).count()
 
-    # ── Severity breakdown ────────────────────────────────────────────
     high = db.query(Alert).filter(
         Alert.user_id == user_id,
         Alert.timestamp >= since,
@@ -99,7 +94,6 @@ def get_stats_overview(
         Alert.severity == "low",
     ).count()
 
-    # ── Alert type breakdown (by audio_label OR visual_label) ────────
     from sqlalchemy import or_
     type_keys = [
         "gunshot", "impact", "distress_sounds", "forced_entry", "fight_sounds", "siren",
@@ -120,7 +114,6 @@ def get_stats_overview(
         if count > 0:
             alert_types[key] = count
 
-    # ── Most active hours (24-element list, index = hour of day) ──────
     hourly_rows = (
         db.query(
             extract("hour", Alert.timestamp).label("hour"),
@@ -140,10 +133,6 @@ def get_stats_overview(
         if 0 <= h < 24:
             hourly[h] = row.cnt
 
-    # ── Accuracy (from real AI data) ────────────────────────────────
-    # Computed as the average fusion_score across all events the AI
-    # processed in this timeframe, expressed as a percentage.
-    # Also returns per-model confidence averages.
     from backend.database.models import Event
 
     total_events = db.query(Event).filter(

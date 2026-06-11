@@ -13,7 +13,6 @@ async def lifespan(app: FastAPI):
     init_db()
     yield
 
-
 app = FastAPI(
     title="AI Surveillance API",
     description="Intelligent Audio-Visual Fusion Surveillance System",
@@ -28,7 +27,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 class ConnectionManager:
     def __init__(self):
@@ -67,12 +65,7 @@ class ConnectionManager:
         for user_id in list(self.active_connections.keys()):
             await self.send_to_user(user_id, message)
 
-
 manager = ConnectionManager()
-
-
-
-
 
 @app.get("/")
 def root():
@@ -81,7 +74,6 @@ def root():
         "project": "AI Surveillance System",
         "connected_users": len(manager.active_connections),
     }
-
 
 @app.websocket("/ws/{user_id}")
 async def websocket_endpoint(
@@ -95,13 +87,11 @@ async def websocket_endpoint(
     except WebSocketDisconnect:
         manager.disconnect(websocket, user_id)
 
-
 app.include_router(events.router, prefix="/events", tags=["events"])
 app.include_router(alerts.router, prefix="/alerts", tags=["alerts"])
 app.include_router(stats.router, prefix="/stats", tags=["stats"])
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 
-# ── Serve snapshot images ──────────────────────────────────────────────────
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 os.makedirs(os.path.join(static_dir, "snapshots"), exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir), name="static")

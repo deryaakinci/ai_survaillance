@@ -7,7 +7,6 @@ import numpy as np
 from pathlib import Path
 from ultralytics import YOLO
 
-
 LABELS = [
     "normal",
     "weapon_detected",
@@ -16,11 +15,8 @@ LABELS = [
     "violence",
     "person_down",
     "intrusion_detected",
-    # NOTE: suspicious_package is handled by fusion engine's abandoned-object
-    # tracking logic (COCO bag/suitcase detection + stationary-time + owner-distance).
 ]
 LABEL_TO_IDX = {label: idx for idx, label in enumerate(LABELS)}
-
 
 def get_device() -> str:
     if torch.backends.mps.is_available():
@@ -29,9 +25,7 @@ def get_device() -> str:
         return "cuda"
     return "cpu"
 
-
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
-
 
 def prepare_yolo_dataset(
     source_path="simulation/datasets/video",
@@ -41,7 +35,6 @@ def prepare_yolo_dataset(
     print("\nPreparing YOLO dataset...")
     print("-" * 40)
 
-    # ── Clean stale data from previous runs ────────────────────────
     if os.path.exists(output_path):
         print("Removing stale dataset from previous training run...")
         shutil.rmtree(output_path)
@@ -52,7 +45,6 @@ def prepare_yolo_dataset(
 
     all_frames = []
 
-    # ── Video frames ───────────────────────────────────────────────
     print("\nExtracting frames from videos...")
     class_videos = {}
     for label in LABELS:
@@ -112,39 +104,10 @@ def prepare_yolo_dataset(
     else:
         print("No video files found — using images only")
 
-    # ── Static images (DISABLED) ────────────────────────────────────
-    # Roboflow-exported images have a different visual domain than
-    # surveillance video frames and corrupt the model when mixed in.
-    # To re-enable, uncomment the block below.
-    # print("\nCollecting static images...")
-    # print("-" * 40)
-    # image_count_total = 0
-    # for label in LABELS:
-    #     folder = os.path.join(image_path, label)
-    #     if not os.path.exists(folder):
-    #         continue
-    #     images = [p for p in Path(folder).iterdir() if p.suffix.lower() in IMAGE_EXTENSIONS]
-    #     if not images:
-    #         continue
-    #     label_idx = LABEL_TO_IDX[label]
-    #     for img_path in images:
-    #         all_frames.append({
-    #             "img_path": str(img_path),
-    #             "name": f"{label}_{img_path.stem}",
-    #             "label_idx": label_idx,
-    #             "label": label,
-    #             "source": "image",
-    #         })
-    #     print(f"✓ {label:<25} {len(images)} images")
-    #     image_count_total += len(images)
-    # if image_count_total == 0:
-    #     print("No static images found")
-
     if len(all_frames) == 0:
         print("No training data found!")
         return None
 
-    # ── Class distribution summary ─────────────────────────────────
     print(f"\nTotal samples: {len(all_frames)}")
     print("Class distribution:")
     label_counts = {}
@@ -190,7 +153,6 @@ def prepare_yolo_dataset(
 
     print(f"\n✓ YOLO dataset saved to {output_path}")
     return yaml_path
-
 
 def train(
     source_path="simulation/datasets/video",
@@ -241,7 +203,6 @@ def train(
 
     return results
 
-
 def evaluate(
     source_path="simulation/datasets/video",
     image_path="simulation/datasets/image",
@@ -262,7 +223,6 @@ def evaluate(
     for label in LABELS:
         frame = None
 
-        # Try video first
         video_folder = os.path.join(source_path, label)
         if os.path.exists(video_folder):
             video_files = list(Path(video_folder).glob("*.mp4"))
@@ -273,7 +233,6 @@ def evaluate(
                 if not ret:
                     frame = None
 
-        # Fall back to image
         if frame is None:
             img_folder = os.path.join(image_path, label)
             if os.path.exists(img_folder):
@@ -301,7 +260,6 @@ def evaluate(
         accuracy = 100.0 * correct / total
         print("-" * 40)
         print(f"Accuracy: {accuracy:.1f}% ({correct}/{total})")
-
 
 if __name__ == "__main__":
     train()

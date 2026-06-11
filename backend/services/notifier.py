@@ -1,6 +1,5 @@
 from datetime import datetime
 
-
 class SystemHealthMonitor:
     def __init__(self):
         self.audio_status = True
@@ -43,7 +42,6 @@ class SystemHealthMonitor:
         elif self.audio_status or self.visual_status:
             return "~70%"
         return "0%"
-
 
 class NotificationService:
     def __init__(self, manager=None):

@@ -20,17 +20,14 @@ router = APIRouter()
 
 SECRET_KEY = os.getenv("SECRET_KEY", "your_secret_key_change_in_production")
 
-
 class LoginRequest(BaseModel):
     email: str
     password: str
-
 
 class SignupRequest(BaseModel):
     name: str
     email: str
     password: str
-
 
 def create_token(user_id: str, email: str) -> str:
     payload = {
@@ -48,14 +45,11 @@ def create_token(user_id: str, email: str) -> str:
     ).hexdigest()
     return f"{payload_b64}.{signature}"
 
-
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
-
 def verify_password(password: str, password_hash: str) -> bool:
     return bcrypt.checkpw(password.encode(), password_hash.encode())
-
 
 @router.post("/login")
 def login(request: LoginRequest, db: Session = Depends(get_db)):
@@ -66,7 +60,6 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
             detail="Invalid email or password",
         )
 
-    # Find user in database (case-insensitive email)
     user = db.query(User).filter(
         func.lower(User.email) == email_norm
     ).first()
@@ -77,7 +70,6 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
             detail="Email not found",
         )
 
-    # Check password
     if not verify_password(request.password, user.password_hash):
         raise HTTPException(
             status_code=401,
@@ -93,7 +85,6 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
         "token": token,
     }
 
-
 @router.post("/signup")
 def signup(request: SignupRequest, db: Session = Depends(get_db)):
     email_norm = (request.email or "").strip().lower()
@@ -104,7 +95,6 @@ def signup(request: SignupRequest, db: Session = Depends(get_db)):
             detail="Please fill all fields correctly",
         )
 
-    # Check if email already exists (case-insensitive)
     existing = db.query(User).filter(
         func.lower(User.email) == email_norm
     ).first()
@@ -115,7 +105,6 @@ def signup(request: SignupRequest, db: Session = Depends(get_db)):
             detail="Email already registered",
         )
 
-    # Create new user
     user = User(
         id=str(uuid.uuid4()),
         name=name_clean,
@@ -135,15 +124,12 @@ def signup(request: SignupRequest, db: Session = Depends(get_db)):
         "token": token,
     }
 
-
 class UpdateProfileRequest(BaseModel):
     name: str
-
 
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
-
 
 @router.put("/profile")
 def update_profile(
@@ -163,7 +149,6 @@ def update_profile(
     user.name = name_clean
     db.commit()
     return {"message": "Profile updated successfully", "name": user.name}
-
 
 @router.put("/password")
 def change_password(

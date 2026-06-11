@@ -16,11 +16,6 @@ from PIL import Image, ImageFile
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-
-# ──────────────────────────────────────────────
-#  Constants
-# ──────────────────────────────────────────────
-
 LABELS = [
     "normal",
     "weapon_detected",
@@ -29,11 +24,6 @@ LABELS = [
     "violence",
     "person_down",
     "intrusion_detected",
-    # NOTE: suspicious_package is NOT a classifier class — it is detected
-    # by the fusion engine's abandoned-object tracking (COCO bag/suitcase
-    # detection + stationary-time + owner-distance logic).
-    # NOTE: robbery is merged into intrusion_detected — visually too similar
-    # to separate reliably.
 ]
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff", ".tif"}
@@ -41,17 +31,12 @@ NUM_CLASSES = len(LABELS)
 LABEL_TO_IDX = {label: idx for idx, label in enumerate(LABELS)}
 IDX_TO_LABEL = {idx: label for idx, label in enumerate(LABELS)}
 
-
-# ──────────────────────────────────────────────
-#  Dataset
-# ──────────────────────────────────────────────
-
 class FrameDataset(Dataset):
     """Dataset of (image_path, label_idx) pairs with on-the-fly transforms."""
 
     def __init__(self, samples: list, transform=None,
                  gentle_transform=None, gentle_classes=None):
-        self.samples = samples      # list of {"path": str, "label_idx": int}
+        self.samples = samples
         self.transform = transform
         self.gentle_transform = gentle_transform
         self.gentle_classes = gentle_classes or set()
@@ -64,22 +49,14 @@ class FrameDataset(Dataset):
         try:
             img = Image.open(item["path"]).convert("RGB")
         except (OSError, IOError):
-            # Return a grey placeholder if the file is corrupt/truncated
             img = Image.new("RGB", (224, 224), (128, 128, 128))
-        # Use gentler augmentation for small-object classes (e.g. weapons)
         if self.gentle_transform and item["label_idx"] in self.gentle_classes:
             img = self.gentle_transform(img)
         elif self.transform:
             img = self.transform(img)
-        # Multi-hot label vector for multi-label classification
         label = torch.zeros(NUM_CLASSES, dtype=torch.float32)
         label[item["label_idx"]] = 1.0
         return img, label
-
-
-# ──────────────────────────────────────────────
-#  Transforms
-# ──────────────────────────────────────────────
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD  = [0.229, 0.224, 0.225]
@@ -103,7 +80,6 @@ def make_train_transform(img_size=224):
         transforms.RandomErasing(p=0.25, scale=(0.02, 0.25)),
     ])
 
-
 def make_val_transform(img_size=224):
     """Deterministic validation transform with configurable resolution."""
     resize_to = img_size + 32
@@ -113,7 +89,6 @@ def make_val_transform(img_size=224):
         transforms.ToTensor(),
         transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
     ])
-
 
 def make_train_transform_gentle(img_size=224):
     """Gentler augmentation for small-object classes like weapons.
@@ -132,28 +107,11 @@ def make_train_transform_gentle(img_size=224):
         transforms.RandomGrayscale(p=0.05),
         transforms.ToTensor(),
         transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-        transforms.RandomErasing(p=0.1, scale=(0.02, 0.12)),  # mild — won't mask whole weapon
-        # No RandomPerspective — distorts fine weapon details
+        transforms.RandomErasing(p=0.1, scale=(0.02, 0.12)),
     ])
 
-
-# Default transforms at 224px (backward compatibility)
 train_transform = make_train_transform(224)
 val_transform = make_val_transform(224)
-
-
-# ──────────────────────────────────────────────
-#  MixUp — the key anti-overfitting technique
-# ──────────────────────────────────────────────
-#
-#  MixUp blends two random training images and their labels:
-#    x_mixed = λ·x_i + (1−λ)·x_j
-#    loss    = λ·L(pred, y_i) + (1−λ)·L(pred, y_j)
-#
-#  This prevents the model from memorising individual frames because
-#  it never sees a "pure" training example — only blends.  The model
-#  must learn shared class features (fire texture, weapon shape, etc.)
-#  instead of scene-specific details (backgrounds, camera angles).
 
 def mixup_data(x, y, alpha=0.4):
     """Apply MixUp: blend two random images and their multi-hot label vectors."""
@@ -162,7 +120,6 @@ def mixup_data(x, y, alpha=0.4):
     else:
         lam = 1.0
 
-    # Ensure the dominant image contributes >= 50% (for cleaner accuracy tracking)
     lam = max(lam, 1.0 - lam)
 
     batch_size = x.size(0)
@@ -171,7 +128,6 @@ def mixup_data(x, y, alpha=0.4):
     mixed_x = lam * x + (1.0 - lam) * x[index]
     mixed_y = lam * y + (1.0 - lam) * y[index]
     return mixed_x, mixed_y, lam
-
 
 class FocalBCELoss(nn.Module):
     """Focal loss with BCE for multi-label classification.
@@ -195,7 +151,6 @@ class FocalBCELoss(nn.Module):
         )
         pt = torch.exp(-bce)
         return ((1 - pt) ** self.gamma * bce).mean()
-
 
 def cutmix_data(x, y, alpha=1.0):
     """CutMix: paste a random rectangular patch from one image onto another.
@@ -224,11 +179,6 @@ def cutmix_data(x, y, alpha=1.0):
     mixed_y = lam * y + (1.0 - lam) * y[index]
     return x, mixed_y, lam
 
-
-# ──────────────────────────────────────────────
-#  Frame extraction
-# ──────────────────────────────────────────────
-
 def extract_and_split_dataset(
     source_path="simulation/datasets/video",
     images_path="simulation/datasets/image",
@@ -249,7 +199,6 @@ def extract_and_split_dataset(
     print("\n📸 Processing and splitting dataset (strict video/image level split)...")
     print("-" * 70)
 
-    # Clean stale frames — handle macOS .DS_Store / resource fork files
     if os.path.exists(output_path):
         print("Cleaning stale classifier_frames directory...")
         for root, dirs, files in os.walk(output_path):
@@ -264,7 +213,6 @@ def extract_and_split_dataset(
     train_samples = []
     val_samples = []
 
-    # --- Part 1: Gather video files and split at the video level ---
     class_videos = {}
     for label in LABELS:
         folder = os.path.join(source_path, label)
@@ -275,18 +223,14 @@ def extract_and_split_dataset(
             if videos:
                 class_videos[label] = sorted(videos)
 
-    # Balance target based on max video count per class
     max_videos = max(len(v) for v in class_videos.values()) if class_videos else 0
     target_frames = max_videos * frames_per_video
 
-    # Weapon videos are short trimmed clips — data is reliable, but too many
-    # frames from short clips creates near-duplicates that are easy to memorise.
     MAX_FPV = {"weapon_detected": 22}
 
     for label in LABELS:
         label_idx = LABEL_TO_IDX[label]
 
-        # --- A. Process Videos (with video-level split) ---
         if label in class_videos:
             videos = class_videos[label]
             np.random.shuffle(videos)
@@ -351,7 +295,6 @@ def extract_and_split_dataset(
                         })
                     cap.release()
 
-        # --- B. Process Static Images (with image-level split) ---
         img_folder = os.path.join(images_path, label)
         if os.path.exists(img_folder):
             images = [
@@ -383,7 +326,6 @@ def extract_and_split_dataset(
                         "label": label,
                     })
 
-    # Summary
     print("\nDataset generation and split complete!")
     print("-" * 70)
     for label in LABELS:
@@ -395,11 +337,6 @@ def extract_and_split_dataset(
     print(f"Total Val samples:   {len(val_samples)}")
 
     return train_samples, val_samples
-
-
-# ──────────────────────────────────────────────
-#  Model builder
-# ──────────────────────────────────────────────
 
 def build_model(num_classes: int, freeze_backbone: bool = True):
     """EfficientNet-V2-S with a regularised classification head.
@@ -413,7 +350,7 @@ def build_model(num_classes: int, freeze_backbone: bool = True):
         for param in model.parameters():
             param.requires_grad = False
 
-    in_features = model.classifier[1].in_features  # 1280 for EfficientNet-V2-S
+    in_features = model.classifier[1].in_features
     model.classifier = nn.Sequential(
         nn.Dropout(p=0.4),
         nn.Linear(in_features, 768),
@@ -429,7 +366,6 @@ def build_model(num_classes: int, freeze_backbone: bool = True):
 
     return model
 
-
 def unfreeze_backbone(model, include_3: bool = False):
     """Unfreeze features.4-6 (and optionally features.3) plus the classifier head."""
     layers = [3, 4, 5, 6] if include_3 else [4, 5, 6]
@@ -438,11 +374,6 @@ def unfreeze_backbone(model, include_3: bool = False):
             param.requires_grad = True
         else:
             param.requires_grad = False
-
-
-# ──────────────────────────────────────────────
-#  Train
-# ──────────────────────────────────────────────
 
 def train(
     source_path="simulation/datasets/video",
@@ -469,7 +400,6 @@ def train(
     )
     print(f"\nUsing device: {device}")
 
-    # ── Extract & split data ───────────────────────────────────────
     train_samples, val_samples = extract_and_split_dataset(
         source_path, images_path, frames_path,
         frames_per_video=10, max_images_per_class=800
@@ -480,12 +410,10 @@ def train(
         print("or images to simulation/datasets/image/<label>/")
         return
 
-    # ── Balanced sampler ───────────────────────────────────────────
     train_labels = [s["label_idx"] for s in train_samples]
     train_counts = np.bincount(train_labels, minlength=NUM_CLASSES)
 
     class_weights = [1.0 / max(train_counts[i], 1) for i in range(NUM_CLASSES)]
-    # Weapons: small-object scene-level detection — 3x oversample for sufficient gradient
     weapon_idx = LABEL_TO_IDX["weapon_detected"]
     class_weights[weapon_idx] *= 3.0
     sample_weights = [class_weights[s["label_idx"]] for s in train_samples]
@@ -495,7 +423,6 @@ def train(
         replacement=True,
     )
 
-    # ── Data loaders (start at 224px, bump to 300px at unfreeze) ──
     weapon_classes = {LABEL_TO_IDX["weapon_detected"]}
     curr_train_tf = make_train_transform(224)
     curr_train_gentle = make_train_transform_gentle(224)
@@ -515,19 +442,13 @@ def train(
         num_workers=0,
     )
 
-    # ── Model ──────────────────────────────────────────────────────
     model = build_model(NUM_CLASSES, freeze_backbone=True).to(device)
 
-    # ── Class-weighted loss ─────────────────────────────────────────
-    # car_crash has ~454 samples vs 2000-3000 for other classes.
-    # WeightedRandomSampler balances how often samples appear, but
-    # class weights in the loss make the gradient STRONGER for rare classes.
     median_count = np.median(train_counts[train_counts > 0])
     loss_weights = torch.tensor([
         np.sqrt(median_count / max(train_counts[i], 1))
         for i in range(NUM_CLASSES)
     ], dtype=torch.float32).to(device)
-    # Weapons: guns + knives hard to distinguish at scene level — strong gradient needed
     loss_weights[weapon_idx] *= 3.0
     print(f"\n📊 Class weights for loss:")
     for i, label in enumerate(LABELS):
@@ -539,7 +460,6 @@ def train(
         label_smoothing=0.0,
     )
 
-    # Phase 1: only train the classifier head
     optimizer = optim.AdamW(
         filter(lambda p: p.requires_grad, model.parameters()),
         lr=lr_head,
@@ -564,13 +484,10 @@ def train(
     print("=" * 60)
 
     for epoch in range(total_epochs):
-        # ── Phase transitions ──────────────────────────────────────
         if epoch == unfreeze_epoch:
             print(f"\n🔓 Unfreezing features.4-6 at epoch {epoch + 1}...")
             unfreeze_backbone(model, include_3=False)
 
-            # 3-tier differential LR: features.3 stays frozen (too early to fine-tune
-            # with this dataset size — unfreezing it caused overfitting).
             deep_params = [
                 p for n, p in model.named_parameters()
                 if "features.4" in n and p.requires_grad
@@ -589,14 +506,11 @@ def train(
                 {"params": head_params, "lr": lr_head_ft},
             ], weight_decay=weight_decay)
 
-            # Warm restarts: T_0=10 gives LR resets at Phase 2 epochs 10, 30
-            # (absolute epochs 25, 45) — right when the ~78% plateau hits.
             scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
                 optimizer, T_0=10, T_mult=2, eta_min=1e-6
             )
             patience_counter = 0
 
-            # Progressive resolution: bump to 300px for better features
             print(f"   📐 Resolution: 224px → 300px")
             curr_train_tf = make_train_transform(300)
             curr_train_gentle = make_train_transform_gentle(300)
@@ -616,12 +530,10 @@ def train(
                 num_workers=0,
             )
 
-        # SWA: start averaging weights after epoch 50
         if epoch == swa_start:
             print(f"\n📊 Starting SWA weight averaging at epoch {epoch + 1}...")
             swa_model = AveragedModel(model).to(device)
 
-        # ── Train ──────────────────────────────────────────────────
         model.train()
         train_loss = 0.0
         train_correct = 0
@@ -631,15 +543,9 @@ def train(
             images = images.to(device)
             labels = labels.to(device)
 
-            # MixUp/CutMix only in Phase 2 — the frozen-backbone head needs
-            # clean class signals to learn decision boundaries first.
-            # Gentler mixing when weapons are in the batch (lower alpha preserves
-            # weapon features while still regularising against memorisation).
             if epoch >= unfreeze_epoch:
                 has_weapons = (labels[:, weapon_idx] > 0.5).any()
                 if has_weapons:
-                    # Skip mixing entirely for weapon batches — even low alpha blurs
-                    # fine-grained shape/texture features the model needs for guns/knives.
                     mixed_images, mixed_labels, lam = images, labels, 1.0
                 elif np.random.rand() < 0.5:
                     mixed_images, mixed_labels, lam = mixup_data(images, labels, alpha=mixup_alpha)
@@ -656,7 +562,6 @@ def train(
             optimizer.step()
 
             train_loss += loss.item()
-            # Approximate accuracy: argmax of sigmoid vs argmax of target
             with torch.no_grad():
                 preds = torch.sigmoid(outputs)
             _, predicted = preds.max(1)
@@ -666,11 +571,9 @@ def train(
 
         train_acc = 100.0 * train_correct / train_total
 
-        # SWA: accumulate weight average each epoch
         if swa_model is not None:
             swa_model.update_parameters(model)
 
-        # ── Validate (no MixUp) ────────────────────────────────────
         model.eval()
         val_loss = 0.0
         val_correct = 0
@@ -698,7 +601,6 @@ def train(
         val_acc = 100.0 * val_correct / val_total
         avg_val_loss = val_loss / len(val_loader)
 
-        # Per-class breakdown — printed every 5 epochs and at phase boundary
         if (epoch + 1) % 5 == 0 or epoch == unfreeze_epoch - 1:
             preds_np   = np.array(val_preds)
             targets_np = np.array(val_targets)
@@ -736,19 +638,16 @@ def train(
                 json.dump(IDX_TO_LABEL, f)
             print(f"  ✓ Best model saved — val acc: {val_acc:.1f}%")
         else:
-            # Don't count patience during SWA — let it finish averaging
             if swa_model is None:
                 patience_counter += 1
             if patience_counter >= patience_limit:
                 print(f"\n⏹ Early stopping at epoch {epoch + 1} (no improvement for {patience_limit} epochs)")
                 break
 
-    # ── SWA finalization ──────────────────────────────────────────
     if swa_model is not None:
         print("\n📊 Finalizing SWA model (updating batch norm statistics)...")
         update_bn(train_loader, swa_model, device=device)
 
-        # Evaluate SWA model on validation set
         swa_model.eval()
         swa_correct = 0
         swa_total = 0
@@ -768,7 +667,6 @@ def train(
         swa_acc = 100.0 * swa_correct / swa_total
         print(f"   SWA val accuracy: {swa_acc:.1f}% (best regular: {best_val_acc:.1f}%)")
 
-        # Per-class SWA breakdown
         preds_np = np.array(swa_preds)
         targets_np = np.array(swa_targets)
         print(f"\n  Per-class SWA val accuracy:")
@@ -791,11 +689,6 @@ def train(
     print(f"Model saved to: {save_path}/best_classifier.pth")
 
     return best_val_acc
-
-
-# ──────────────────────────────────────────────
-#  Evaluate
-# ──────────────────────────────────────────────
 
 def evaluate(
     source_path="simulation/datasets/video",
@@ -831,7 +724,6 @@ def evaluate(
         if not video_files:
             continue
 
-        # Test on first frame of first video
         cap = cv2.VideoCapture(str(video_files[0]))
         ret, frame = cap.read()
         cap.release()
@@ -858,7 +750,6 @@ def evaluate(
         accuracy = 100.0 * correct / total
         print("-" * 50)
         print(f"Accuracy: {accuracy:.1f}% ({correct}/{total})")
-
 
 if __name__ == "__main__":
     train()

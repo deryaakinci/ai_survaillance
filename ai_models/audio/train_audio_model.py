@@ -9,16 +9,10 @@ from sklearn.model_selection import train_test_split
 from pathlib import Path
 import json
 
-# Import shared architecture and constants from audio_model
 try:
     from audio_model import AudioCNN, NUM_CLASSES, LABELS, LABEL_TO_IDX, IDX_TO_LABEL
 except ModuleNotFoundError:
     from ai_models.audio.audio_model import AudioCNN, NUM_CLASSES, LABELS, LABEL_TO_IDX, IDX_TO_LABEL
-
-
-# ──────────────────────────────────────────────
-#  Feature extraction (same as audio_model.py)
-# ──────────────────────────────────────────────
 
 def extract_features(audio: np.ndarray, sr: int) -> np.ndarray:
     target_length = sr * 3
@@ -37,11 +31,6 @@ def extract_features(audio: np.ndarray, sr: int) -> np.ndarray:
     mel_db = (mel_db - mel_db.min()) / (mel_db.max() - mel_db.min() + 1e-8)
     return mel_db.astype(np.float32)
 
-
-# ──────────────────────────────────────────────
-#  Augmentation
-# ──────────────────────────────────────────────
-
 def augment_audio(audio: np.ndarray, sr: int, heavy: bool = False) -> np.ndarray:
     """Apply random augmentations to an audio clip.
     
@@ -49,39 +38,29 @@ def augment_audio(audio: np.ndarray, sr: int, heavy: bool = False) -> np.ndarray
     to generate more diverse training examples from limited data.
     """
 
-    # Time shift — roll audio forward/backward by up to 10% (20% for heavy)
     max_shift = 0.20 if heavy else 0.10
     shift = int(np.random.uniform(-max_shift, max_shift) * len(audio))
     audio = np.roll(audio, shift)
 
-    # Add Gaussian noise (always for heavy, 50% for normal)
     if heavy or np.random.rand() < 0.5:
         noise_level = np.random.uniform(0.002, 0.010) if heavy else np.random.uniform(0.001, 0.005)
         audio = audio + noise_level * np.random.randn(len(audio))
 
-    # Pitch shift by -2 to +2 semitones (-4 to +4 for heavy)
     if heavy or np.random.rand() < 0.5:
         max_steps = 4 if heavy else 2
         steps = np.random.uniform(-max_steps, max_steps)
         audio = librosa.effects.pitch_shift(audio, sr=sr, n_steps=steps)
 
-    # Time stretch by 0.8x–1.2x for heavy, 0.9x–1.1x for normal
     if heavy or np.random.rand() < 0.5:
         lo, hi = (0.8, 1.2) if heavy else (0.9, 1.1)
         rate = np.random.uniform(lo, hi)
         audio = librosa.effects.time_stretch(audio, rate=rate)
 
-    # Volume scaling (heavy augmentation only)
     if heavy and np.random.rand() < 0.7:
         gain = np.random.uniform(0.6, 1.5)
         audio = audio * gain
 
     return audio.astype(np.float32)
-
-
-# ──────────────────────────────────────────────
-#  Dataset
-# ──────────────────────────────────────────────
 
 class AudioDataset(Dataset):
     def __init__(self, samples, augment: bool = False, minority_threshold: int = 20):
@@ -89,7 +68,6 @@ class AudioDataset(Dataset):
         self.augment = augment
         self.minority_threshold = minority_threshold
 
-        # Pre-compute which classes are minority (< threshold samples)
         if augment:
             counts = {}
             for s in samples:
@@ -119,11 +97,6 @@ class AudioDataset(Dataset):
         label = torch.tensor(item["label_idx"], dtype=torch.long)
         return tensor, label
 
-
-# ──────────────────────────────────────────────
-#  Dataset loader
-# ──────────────────────────────────────────────
-
 def load_dataset(base_path="simulation/datasets/audio"):
     all_samples = []
     print("\nLoading audio dataset...")
@@ -148,7 +121,7 @@ def load_dataset(base_path="simulation/datasets/audio"):
                 audio, sr = librosa.load(str(file), sr=22050)
                 features = extract_features(audio, sr)
                 all_samples.append({
-                    "audio": audio,        # kept for augmentation
+                    "audio": audio,
                     "sr": sr,
                     "features": features,
                     "label": label,
@@ -164,11 +137,6 @@ def load_dataset(base_path="simulation/datasets/audio"):
     print("-" * 40)
     print(f"Total samples: {len(all_samples)}")
     return all_samples
-
-
-# ──────────────────────────────────────────────
-#  Train
-# ──────────────────────────────────────────────
 
 def train(
     base_path="simulation/datasets/audio",
@@ -190,7 +158,6 @@ def train(
         print("Add .wav files to your dataset folders first.")
         return
 
-    # Stratified split — fall back to plain split if any class has < 2 samples
     label_indices = [s["label_idx"] for s in all_samples]
     counts = np.bincount(label_indices, minlength=NUM_CLASSES)
     can_stratify = all_samples and int(counts.min()) >= 2
@@ -215,28 +182,23 @@ def train(
     print(f"\nTrain samples : {len(train_samples)}")
     print(f"Val samples   : {len(val_samples)}")
 
-    # ── Class-weighted training to fix imbalance ──
     train_label_indices = [s["label_idx"] for s in train_samples]
     train_counts = np.bincount(train_label_indices, minlength=NUM_CLASSES)
     print(f"\nClass distribution (train):")
     for i, label in enumerate(LABELS):
         print(f"  {label:<25} {train_counts[i]:>5} samples")
 
-    # Sqrt-inverse-frequency weights — gentler than raw inverse, avoids
-    # extreme overweighting of classes with only 2-3 samples
     class_weights = np.zeros(NUM_CLASSES, dtype=np.float32)
     for i in range(NUM_CLASSES):
         if train_counts[i] > 0:
             class_weights[i] = 1.0 / np.sqrt(train_counts[i])
         else:
             class_weights[i] = 0.0
-    # Normalize so weights sum to NUM_CLASSES
     if class_weights.sum() > 0:
         class_weights = class_weights / class_weights.sum() * NUM_CLASSES
     class_weights_tensor = torch.tensor(class_weights).to(device)
     print(f"\nClass weights: {dict(zip(LABELS, [f'{w:.2f}' for w in class_weights]))}")
 
-    # Per-sample weights for WeightedRandomSampler (oversample minority classes)
     sample_weights = [1.0 / np.sqrt(max(train_counts[s["label_idx"]], 1)) for s in train_samples]
     sampler = WeightedRandomSampler(
         weights=sample_weights,
@@ -244,11 +206,10 @@ def train(
         replacement=True,
     )
 
-    # Augmentation enabled only for training set
     train_loader = DataLoader(
         AudioDataset(train_samples, augment=True),
         batch_size=batch_size,
-        sampler=sampler,  # balanced sampling instead of shuffle
+        sampler=sampler,
     )
     val_loader = DataLoader(
         AudioDataset(val_samples, augment=False),
@@ -328,11 +289,6 @@ def train(
     print(f"Best validation accuracy: {best_val_acc:.1f}%")
     print(f"Model saved to: {save_path}/best_model.pth")
 
-
-# ──────────────────────────────────────────────
-#  Evaluate
-# ──────────────────────────────────────────────
-
 def evaluate(save_path="ai_models/audio/saved_model"):
     device = torch.device(
         "mps" if torch.backends.mps.is_available()
@@ -374,7 +330,6 @@ def evaluate(save_path="ai_models/audio/saved_model"):
             f"Predicted: {predicted_label:<20} "
             f"Confidence: {confidence.item():.2f}"
         )
-
 
 if __name__ == "__main__":
     train()

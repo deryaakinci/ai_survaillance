@@ -1,6 +1,5 @@
 from datetime import datetime
 
-
 class AlertLogic:
     def __init__(self):
         self.alert_history = []
@@ -19,7 +18,6 @@ class AlertLogic:
 
         audio_label  = fusion_result.get("audio_label")
         visual_label = fusion_result.get("visual_label")
-        # also check secondary detections (e.g. weapon_detected as secondary to violence)
         detection_labels = {d[0] for d in fusion_result.get("detections", [])}
 
         is_critical = (
@@ -28,7 +26,6 @@ class AlertLogic:
             or bool(detection_labels & self.CRITICAL_LABELS)
         )
 
-        # Critical events always bypass the duplicate check
         if not is_critical:
             recent_duplicates = [
                 a for a in self.alert_history
@@ -45,7 +42,6 @@ class AlertLogic:
             "visual_label": visual_label,
         })
 
-        # Clean history older than 5 minutes (fixed: was .seconds, now .total_seconds)
         self.alert_history = [
             a for a in self.alert_history
             if (now - a["timestamp"]).total_seconds() < 300

@@ -11,11 +11,9 @@ import json
 import os
 import uuid
 
-
 router = APIRouter()
 
 SECRET_KEY = os.getenv("SECRET_KEY", "your_secret_key_change_in_production")
-
 
 def get_current_user_id(request: Request) -> str:
     """Extract and VERIFY user ID from JWT token"""
@@ -32,7 +30,6 @@ def get_current_user_id(request: Request) -> str:
 
         payload_b64, provided_signature = parts[0], parts[1]
 
-        # --- Verify signature ---
         expected_signature = hmac.new(
             SECRET_KEY.encode(),
             payload_b64.encode(),
@@ -42,10 +39,8 @@ def get_current_user_id(request: Request) -> str:
         if not hmac.compare_digest(expected_signature, provided_signature):
             raise HTTPException(status_code=401, detail="Invalid token signature")
 
-        # --- Decode payload ---
         payload = json.loads(base64.b64decode(payload_b64 + "=="))
 
-        # --- Check expiry ---
         import time
         if payload.get("exp", 0) < int(time.time()):
             raise HTTPException(status_code=401, detail="Token expired")
@@ -60,7 +55,6 @@ def get_current_user_id(request: Request) -> str:
         raise
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
-
 
 @router.get("/")
 def get_alerts(
@@ -95,7 +89,6 @@ def get_alerts(
         for a in alerts
     ]
 
-
 @router.post("/")
 async def create_alert(
     audio_label: str,
@@ -105,7 +98,6 @@ async def create_alert(
     request: Request = None,
     db: Session = Depends(get_db),
 ):
-    # Get user_id from token — not from query param
     user_id = get_current_user_id(request)
 
     alert = Alert(
@@ -135,8 +127,6 @@ async def create_alert(
         })
 
     return alert
-
-
 
 def _get_title(audio_label: str, severity: str, visual_label: str = "normal") -> str:
     titles = {

@@ -20,7 +20,6 @@ NUM_CLASSES = len(LABELS)
 LABEL_TO_IDX = {label: idx for idx, label in enumerate(LABELS)}
 IDX_TO_LABEL = {idx: label for idx, label in enumerate(LABELS)}
 
-
 class AudioCNN(nn.Module):
     def __init__(self, num_classes: int):
         super(AudioCNN, self).__init__()
@@ -65,7 +64,6 @@ class AudioCNN(nn.Module):
         x = self.adaptive_pool(x)
         x = self.classifier(x)
         return x
-
 
 class AudioAnomalyDetector:
     MODEL_PATH = "ai_models/audio/saved_model/best_model.pth"
@@ -119,10 +117,6 @@ class AudioAnomalyDetector:
         if self.model is None:
             return {"label": "normal", "confidence": 0.0, "error": "Model not loaded"}
 
-        # Silent or missing audio produces an all-zeros (or near-zeros) array.
-        # The mel spectrogram of silence is out-of-distribution for the CNN and
-        # causes it to output random high-confidence predictions. Detect silence
-        # early and skip classification entirely.
         if np.max(np.abs(audio_chunk)) < 0.002:
             return {"label": "normal", "confidence": 0.99, "silent": True}
 
@@ -139,7 +133,6 @@ class AudioAnomalyDetector:
         top2_conf = float(top2_probs[0][1])
         top2_label = self.idx_to_label.get(int(top2_idx[0][1]), "normal")
 
-        # Check borderline: top1 normal but top2 anomaly has decent conf
         if top1_label == "normal":
             if top2_label != "normal" and top2_conf > 0.25:
                 return {

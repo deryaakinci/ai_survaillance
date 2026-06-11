@@ -5,7 +5,6 @@ import uuid
 
 Base = declarative_base()
 
-
 class Event(Base):
     __tablename__ = "events"
 
@@ -22,7 +21,6 @@ class Event(Base):
     zone = Column(String, default="Zone 1")
     total_events_in_chunk = Column(Integer, default=1)
 
-
 class Alert(Base):
     __tablename__ = "alerts"
 
@@ -37,7 +35,6 @@ class Alert(Base):
     audio_clip_url = Column(String, nullable=True)
     video_clip_url = Column(String, nullable=True)
     timestamp = Column(DateTime, default=datetime.utcnow)
-
 
 class User(Base):
     __tablename__ = "users"

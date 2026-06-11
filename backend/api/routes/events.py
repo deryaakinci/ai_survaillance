@@ -14,7 +14,6 @@ router = APIRouter()
 
 SECRET_KEY = os.getenv("SECRET_KEY", "your_secret_key_change_in_production")
 
-
 def get_current_user_id(request: Request) -> str:
     """Extract and VERIFY user ID from JWT token"""
     auth_header = request.headers.get("Authorization")
@@ -56,7 +55,6 @@ def get_current_user_id(request: Request) -> str:
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-
 @router.get("/")
 def list_events(
     days: int = 7,
@@ -94,7 +92,6 @@ def list_events(
         }
         for e in events
     ]
-
 
 @router.post("/")
 def create_event(
@@ -136,20 +133,13 @@ def create_event(
         "alert_fired": event.alert_fired,
     }
 
-
-# ── Deduplication tracker for demo broadcasts ─────────────────────────────
-# Tracks which (audio_label) values have already triggered an alert
-# for each user during the current simulation run.
-# Key = user_id, Value = set of audio_label strings already alerted.
 _broadcast_seen: dict[str, set[str]] = {}
-
 
 @router.post("/demo_broadcast/reset")
 def reset_broadcast_session():
     """Clear deduplication state — call before starting a new demo run."""
     _broadcast_seen.clear()
     return {"status": "reset_successful"}
-
 
 @router.post("/demo_broadcast")
 async def demo_broadcast_event(
@@ -175,7 +165,6 @@ async def demo_broadcast_event(
     from backend.services.notifier import NotificationService
     from backend.api.routes.alerts import _get_title
 
-    # Build snapshot URL if a filename was provided
     snapshot_url = None
     if snapshot_filename:
         snapshot_url = f"/static/snapshots/{snapshot_filename}"
@@ -183,7 +172,6 @@ async def demo_broadcast_event(
     users = db.query(User).all()
 
     for user in users:
-        # ── Always save every event (history + analytics) ──────────────
         event = Event(
             id=str(uuid.uuid4()),
             user_id=user.id,
@@ -199,11 +187,8 @@ async def demo_broadcast_event(
         )
         db.add(event)
 
-        # ── Deduplicated alert + notification ──────────────────────────
         if alert_fired:
             seen = _broadcast_seen.setdefault(user.id, set())
-            # Use both labels as dedup key so different visual threats
-            # aren't suppressed just because audio_label is the same
             threat_a = audio_label if audio_label != "normal" else ""
             threat_v = visual_label if visual_label != "normal" else ""
             dedup_key = f"{threat_a}|{threat_v}"
@@ -223,7 +208,6 @@ async def demo_broadcast_event(
                 )
                 db.add(alert)
 
-                # Send real-time websocket alert (first occurrence only)
                 if hasattr(request.app.state, "manager"):
                     notifier = NotificationService(request.app.state.manager)
                     await notifier.send_alert(user.id, {
@@ -240,5 +224,4 @@ async def demo_broadcast_event(
 
     db.commit()
     return {"status": "broadcast_successful", "users_reached": len(users)}
-
 
