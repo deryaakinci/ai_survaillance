@@ -181,6 +181,31 @@ def setup_api_session(base_url="http://localhost:8000"):
     except:
         return None
 
+def post_audio_alert(session_info, message: str):
+    """Send an audio-not-present warning alert to the dashboard."""
+    if not session_info:
+        return
+    import requests
+    try:
+        requests.post(
+            f"{session_info['base_url']}/events/demo_broadcast",
+            params={
+                "audio_label": "no_audio",
+                "visual_label": "N/A",
+                "audio_confidence": 0.0,
+                "visual_confidence": 0.0,
+                "fusion_score": 0.0,
+                "alert_fired": True,
+                "severity": "medium",
+                "zone": "Demo Camera",
+                "snapshot_filename": "",
+                "message": message,
+            },
+            timeout=2,
+        )
+    except Exception:
+        pass
+
 def post_event(session_info, audio_result, visual_result, fusion_result, alert_fired, frame=None):
     if not session_info:
         return
@@ -258,10 +283,28 @@ def run_demo(
     else:
         print(_c(C.YELLOW, "  ⚠ Local backend not running. Terminal-only mode.\n"))
 
+
     cap = cv2.VideoCapture(video_path)
-    fps           = cap.get(cv2.CAP_PROP_FPS) or 25
+    fps           = cap.get(cv2.CAP_PROP_FPS) or 0
     total_frames  = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    # Check whether the file actually contains a video stream by trying to
+    # read one frame.  Audio-only containers (e.g. MP3/AAC wrapped in MP4)
+    # will open without error but return ret=False immediately.
+    ret, _ = cap.read()
     cap.release()
+
+    if not ret or fps == 0 or total_frames == 0:
+        print()
+        print(_c(C.RED + C.BOLD, "✗ DEMO ABORTED: No video stream detected."))
+        print(_c(C.RED,
+            "  The supplied file appears to contain audio only.\n"
+            "  Audio-only input is not supported because audio analysis\n"
+            "  alone is not reliable enough for surveillance decisions.\n"
+            "\n"
+            "  Please provide a video file that includes a video stream.\n"
+        ))
+        sys.exit(1)
+
     duration_sec  = total_frames / fps
     sr = 22050
 
@@ -282,16 +325,20 @@ def run_demo(
             audio_array = load_wav_numpy(tmp_wav, sr=sr)
             print(f"  Audio   : {len(audio_array) / sr:.1f} s loaded  ✓\n")
         except RuntimeError as e:
-            print(_c(C.YELLOW, f"  ⚠ Audio extraction failed — running visual-only: {e}\n"))
+            _audio_warn = f"Audio not present in demo: extraction failed — {e}"
+            print(_c(C.YELLOW, f"  ⚠ {_audio_warn}\n"))
+            post_audio_alert(session_info, _audio_warn)
             audio_array = None
         finally:
             if os.path.exists(tmp_wav):
                 os.remove(tmp_wav)
     else:
+        _audio_warn = "Audio not present in demo: ffmpeg not found — audio analysis disabled."
         print(_c(C.YELLOW,
-            "  ⚠ ffmpeg not found — audio analysis disabled.\n"
-            "    Install with: brew install ffmpeg\n"
+            f"  ⚠ {_audio_warn}\n"
+            "    Install ffmpeg with: brew install ffmpeg\n"
         ))
+        post_audio_alert(session_info, _audio_warn)
 
     print(_c(C.BOLD, "-" * 62))
     print(_c(C.BOLD, f"  {'TIME':<8} {'AUDIO LABEL':<22} {'VISUAL LABEL':<22} STATUS"))
@@ -371,6 +418,10 @@ def run_demo(
             print(_c(C.DIM, f"           → fused_score={fused:.3f}  "
                 f"audio_conf={a_conf:.2f}  visual_conf={v_conf:.2f}"))
 
+        
+        if audio_result.get("silent"):
+            fusion_result = dict(fusion_result)  
+            fusion_result["audio_label"] = "no_audio_stream"
         post_event(session_info, audio_result, visual_result, fusion_result, fusion_result["alert"], frame)
 
         chunk_start += chunk_sec

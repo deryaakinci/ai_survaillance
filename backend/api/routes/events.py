@@ -154,6 +154,7 @@ async def demo_broadcast_event(
     severity: str = "low",
     zone: str = "Demo Camera",
     snapshot_filename: str = "",
+    message: str = "",
 ):
     """
     Broadcasts a simulation event to ALL users in the database automatically.
@@ -210,6 +211,11 @@ async def demo_broadcast_event(
 
                 if hasattr(request.app.state, "manager"):
                     notifier = NotificationService(request.app.state.manager)
+                    alert_body = (
+                        message
+                        if message
+                        else f"{audio_label.replace('_', ' ').title()} · {visual_label.replace('_', ' ').title()} · {zone}"
+                    )
                     await notifier.send_alert(user.id, {
                         "id": alert.id,
                         "audio_label": audio_label,
@@ -219,7 +225,7 @@ async def demo_broadcast_event(
                         "snapshot_url": snapshot_url,
                         "timestamp": alert.timestamp.isoformat() + "Z",
                         "title": _get_title(audio_label, severity, visual_label),
-                        "body": f"{audio_label.replace('_', ' ').title()} · {visual_label.replace('_', ' ').title()} · {zone}",
+                        "body": alert_body,
                     })
 
     db.commit()
